@@ -5,25 +5,85 @@ Transform API specifications into production-ready Cloudflare Workers connectors
 ## Architecture
 
 ```mermaid
-graph TD
-  A[User Upload / Chat] -->|Spec file| B[/api/parse -> Common Spec Model]
-  B --> C[/api/generate\nWorkers AI creates connector]
-  C --> D[/api/verify\nstatic analysis & smoke tests]
-  D --> E[/api/install]
-  E --> F[ToolRegistry Durable Object]
-  F --> G[/api/chat]
-  G --> H[Installed connectors run via executeToolCall]
-  A --> I[/api/stream SSE]
-  I --> J[Workflow Console]
-  G --> K[SessionState Durable Object]
-  G --> L[Scenario Suite triggers saved requests]
-  subgraph Durable Objects
-    F
-    K
-  end
-  subgraph Workers AI
-    C
-  end
+flowchart TB
+    subgraph Browser["🌐 Browser UI"]
+        Upload["📤 Spec Upload\n(OpenAPI, GraphQL, etc.)"]
+        VisualEditor["🎨 Visual Editor\n(Drag & drop endpoints)"]
+        Chat["💬 Chat Interface\n(AI Assistant)"]
+        Console["📊 Real-time Console\n(SSE logs & metrics)"]
+    end
+
+    subgraph APILayer["⚡ API Endpoints"]
+        Parse["/api/parse"]
+        Generate["/api/generate"]
+        Verify["/api/verify"]
+        Install["/api/install"]
+        ChatAPI["/api/chat"]
+        Stream["/api/stream"]
+        Tools["/api/tools"]
+    end
+
+    subgraph Processing["🔧 Processing Pipeline"]
+        Parser["Parser\n(Normalize specs to CSM)"]
+        Generator["Generator\n(AI code generation)"]
+        Verifier["Verifier\n(Static analysis & tests)"]
+        Installer["Installer\n(Persist connectors)"]
+        Executor["Tool Executor\n(Run connectors)"]
+    end
+
+    subgraph Storage["💾 Durable Objects"]
+        ToolRegistry["ToolRegistry\n(Installed connectors)"]
+        SessionState["SessionState\n(Chat history & scenarios)"]
+        Analytics["AnalyticsTracker\n(Workflow metrics)"]
+    end
+
+    subgraph External["🤖 External Services"]
+        WorkersAI["Workers AI\n(Llama 3.3 70B)"]
+    end
+
+    %% User interactions
+    Upload --> Parse
+    VisualEditor --> Generate
+    Chat --> ChatAPI
+    Console --> Stream
+
+    %% API to Processing
+    Parse --> Parser
+    Generate --> Generator
+    Verify --> Verifier
+    Install --> Installer
+    ChatAPI --> Executor
+    Tools --> ToolRegistry
+
+    %% Processing workflow
+    Parser -.->|Common Spec Model| Generator
+    Generator --> WorkersAI
+    WorkersAI -.->|Generated code| Generator
+    Generator -.->|Code| Verifier
+    Verifier -.->|Validated| Installer
+    Installer --> ToolRegistry
+
+    %% Chat flow
+    ChatAPI --> SessionState
+    ChatAPI --> WorkersAI
+    Executor --> ToolRegistry
+    Executor -.->|Results| ChatAPI
+
+    %% Analytics
+    Parser -.-> Analytics
+    Generator -.-> Analytics
+    Verifier -.-> Analytics
+    Installer -.-> Analytics
+
+    %% Streaming
+    Stream -.->|SSE| Console
+    ChatAPI -.->|Events| Stream
+
+    style Browser fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    style APILayer fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style Processing fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    style Storage fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    style External fill:#fff9c4,stroke:#f57f17,stroke-width:2px
 ```
 
 - `workers/index.ts` routes API traffic, streams logs, and orchestrates AI/tool calls.
