@@ -10,9 +10,9 @@ import { ToolRegistry as ToolRegistryImpl } from './durable_objects/ToolRegistry
 import { SessionState as SessionStateImpl } from './durable_objects/SessionState';
 import { AnalyticsTracker as AnalyticsTrackerImpl, type AnalyticsEvent } from './durable_objects/Analytics';
 
-export class ToolRegistry extends ToolRegistryImpl {}
-export class SessionState extends SessionStateImpl {}
-export class AnalyticsTracker extends AnalyticsTrackerImpl {}
+export class ToolRegistry extends ToolRegistryImpl { }
+export class SessionState extends SessionStateImpl { }
+export class AnalyticsTracker extends AnalyticsTrackerImpl { }
 
 
 async function executeToolCall(
@@ -685,19 +685,19 @@ export default {
                     .join('\n');
 
                 const contextMessages = [{ role: 'system', content: systemContent }];
-                
+
                 // Validate total token count before making AI call and trim if needed
                 const userMessage = { role: 'user' as const, content: prompt };
                 let finalHistory = trimmedHistory;
                 let allMessages = [...contextMessages, ...finalHistory, userMessage];
                 let estimatedTokens = estimateMessageTokens(allMessages as any);
-                
+
                 // If still over limit, aggressively trim history
                 if (estimatedTokens > MAX_MODEL_TOKENS) {
                     const overageTokens = estimatedTokens - MAX_MODEL_TOKENS;
                     const tokensToRemove = overageTokens + 1000; // Extra buffer
                     const charsToRemove = tokensToRemove * CHARS_PER_TOKEN;
-                    
+
                     // Remove oldest messages until we're under the limit
                     let removedChars = 0;
                     const newHistory = [];
@@ -724,14 +724,14 @@ export default {
                         const meta = tool.metadata || {};
                         const description = truncateForModel(meta.description || meta.endpoint || `Execute ${name} API connector`, 150);
                         const exports = Array.isArray(tool.exports) ? tool.exports : [];
-                        
+
                         // Limit exports to first 10 to prevent schema bloat
                         const limitedExports = exports.slice(0, 10);
                         const hasMore = exports.length > 10;
-                        
+
                         const properties: Record<string, any> = {};
                         if (limitedExports.length > 0) {
-                            const exportDesc = hasMore 
+                            const exportDesc = hasMore
                                 ? `First ${limitedExports.length} of ${exports.length} exports: ${limitedExports.join(', ')}`
                                 : `Available exports: ${limitedExports.join(', ')}`;
                             properties.exportName = {
@@ -740,14 +740,14 @@ export default {
                                 enum: limitedExports
                             };
                         }
-                        
+
                         // Keep params generic - tools can accept varied inputs
                         properties.params = {
                             type: "object",
                             description: "Parameters object to pass to the tool function",
                             additionalProperties: true
                         };
-                        
+
                         return {
                             type: "function",
                             function: {
@@ -771,7 +771,7 @@ export default {
                         aiConfig.tools = toolSchemas;
                         aiConfig.tool_choice = "auto";
                     }
-                    
+
                     aiResponse = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', aiConfig);
                 } catch (error) {
                     const errorDetails = describeAiError(error);
@@ -799,13 +799,13 @@ export default {
                 }
 
                 let response = aiResponse.response || 'No response';
-                
+
                 if (aiResponse.tool_calls && Array.isArray(aiResponse.tool_calls) && aiResponse.tool_calls.length > 0) {
                     for (const toolCall of aiResponse.tool_calls) {
                         // Handle both Cloudflare format {name, arguments} and OpenAI format {function: {name, arguments}}
                         const toolName = toolCall.function?.name || toolCall.name;
                         const rawArgs = toolCall.function?.arguments || toolCall.arguments;
-                        
+
                         if (toolName) {
                             let args: Record<string, any> = {};
                             let parseError: string | null = null;
@@ -844,14 +844,14 @@ export default {
                             toolExecutions.push(execution);
                         }
                     }
-                    
+
                     // Build tool result messages following OpenAI function calling pattern
                     const toolResultMessages = aiResponse.tool_calls.map((toolCall: any, idx: number) => {
                         // Handle both Cloudflare format {name, arguments} and OpenAI format {function: {name, arguments}}
                         const toolName = toolCall?.function?.name || toolCall?.name || 'unknown';
-                        
+
                         // Find the execution result for this tool call by name
-                        const exec = toolExecutions.find(e => 
+                        const exec = toolExecutions.find(e =>
                             e.tool === toolName
                         ) || {
                             tool: toolName,
@@ -859,14 +859,14 @@ export default {
                             error: 'Tool execution result not found',
                             export: undefined
                         };
-                        
+
                         let content: string;
                         if (exec.success) {
                             content = formatToolExecutionSummary(exec.tool, exec.export, exec.result);
                         } else {
                             content = formatToolExecutionError(exec.tool, exec.export, exec.error || 'Unknown error');
                         }
-                        
+
                         return {
                             role: 'tool',
                             tool_call_id: toolCall.id || `call_${idx}`,
@@ -874,7 +874,7 @@ export default {
                             content: content
                         };
                     });
-                    
+
                     // Continue conversation with tool results - single AI call with proper function calling flow
                     try {
                         // Normalize tool_calls to OpenAI format for the follow-up request
@@ -890,7 +890,7 @@ export default {
                                 }
                             };
                         });
-                        
+
                         const finalResponse = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
                             messages: [
                                 ...contextMessages,
@@ -900,7 +900,7 @@ export default {
                                 ...toolResultMessages
                             ],
                         });
-                        
+
                         response = finalResponse.response || response;
                     } catch (error) {
                         const errorDetails = describeAiError(error);
@@ -1192,7 +1192,7 @@ function estimateMessageTokens(messages: Array<{ role: string; content: string }
     if (!Array.isArray(messages) || messages.length === 0) {
         return 0;
     }
-    
+
     let total = 0;
     for (const msg of messages) {
         // Rough OpenAI token formula: role + content + formatting overhead
