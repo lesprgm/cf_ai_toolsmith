@@ -1,16 +1,18 @@
 import type { Env } from './bindings';
-import { parseSpecToCSM } from './parser';
+import { parseSpecToCSM, detectFormat } from './parser';
 import { generateCode } from './generator';
 import { verifyCode } from './verifier';
 import { installTool, listTools } from './installer';
 import { getGlobalLogger, resetGlobalLogger } from './utils/log';
 import { TEMPLATE_CONNECTORS } from './templates';
 import type { TemplateConnector } from './templates';
-import type { AnalyticsEvent } from './durable_objects/Analytics';
+import { ToolRegistry as ToolRegistryImpl } from './durable_objects/ToolRegistry';
+import { SessionState as SessionStateImpl } from './durable_objects/SessionState';
+import { AnalyticsTracker as AnalyticsTrackerImpl, type AnalyticsEvent } from './durable_objects/Analytics';
 
-export { ToolRegistry } from './durable_objects/ToolRegistry';
-export { SessionState } from './durable_objects/SessionState';
-export { AnalyticsTracker } from './durable_objects/Analytics';
+export class ToolRegistry extends ToolRegistryImpl {}
+export class SessionState extends SessionStateImpl {}
+export class AnalyticsTracker extends AnalyticsTrackerImpl {}
 
 
 async function executeToolCall(
@@ -62,6 +64,19 @@ async function executeToolCall(
             error: (error as Error).message,
         };
     }
+}
+
+interface ScenarioRunResult {
+    id: string;
+    name: string;
+    success: boolean;
+    status?: number;
+    statusText?: string;
+    durationMs?: number;
+    error?: string;
+    preview?: string;
+    headers?: Record<string, string>;
+    ranAt: string;
 }
 
 /**
@@ -211,6 +226,47 @@ export default {
                 return jsonResponse({ ...installResult, template }, 200, corsHeaders);
             }
 
+            if (url.pathname === '/api/scenarios' && request.method === 'GET') {
+                const sessionStub = getSessionStub(env, request);
+                const upstreamResp = await sessionStub.fetch('http://internal/scenarios');
+                const data = await upstreamResp.json<any>();
+                return jsonResponse(data, upstreamResp.status, corsHeaders);
+            }
+
+            if (url.pathname === '/api/scenarios' && request.method === 'POST') {
+                const sessionStub = getSessionStub(env, request);
+                const payload = await request.json<any>();
+                const upstreamResp = await sessionStub.fetch('http://internal/scenarios', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await upstreamResp.json<any>();
+                return jsonResponse(data, upstreamResp.status, corsHeaders);
+            }
+
+            if (url.pathname === '/api/scenarios/run' && request.method === 'POST') {
+                const sessionStub = getSessionStub(env, request);
+                const payload = await request.json<any>().catch(() => ({}));
+                const upstreamResp = await sessionStub.fetch('http://internal/scenarios/run', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await upstreamResp.json<any>();
+                return jsonResponse(data, upstreamResp.status, corsHeaders);
+            }
+
+            if (url.pathname.startsWith('/api/scenarios/') && request.method === 'DELETE') {
+                const sessionStub = getSessionStub(env, request);
+                const scenarioId = url.pathname.split('/').slice(-1)[0];
+                const upstreamResp = await sessionStub.fetch(`http://internal/scenarios/${scenarioId}`, {
+                    method: 'DELETE',
+                });
+                const data = await upstreamResp.json<any>();
+                return jsonResponse(data, upstreamResp.status, corsHeaders);
+            }
+
             if (url.pathname === '/api/test-connector' && request.method === 'POST') {
                 const body = await request.json<any>();
                 const { url: targetUrl, method = 'GET', headers = {}, body: requestBody } = body;
@@ -277,29 +333,87 @@ export default {
             if (url.pathname === '/api/parse' && request.method === 'POST') {
                 resetGlobalLogger();
 
-                const formData = await request.formData();
-                const fileEntry = formData.get('file');
+                const contentType = request.headers.get('Content-Type') || '';
+                let content: string | null = null;
+                let filename = 'uploaded-spec';
+                let customPrompt: string | undefined;
+                let customSystemPrompt: string | undefined;
 
-                if (!fileEntry || typeof fileEntry === 'string') {
-                    return jsonResponse({ error: 'No file provided' }, 400, corsHeaders);
+                if (contentType.includes('application/json')) {
+                    const body = await request.json<any>().catch(() => null);
+
+                    if (!body || body.spec == null) {
+                        return jsonResponse({ error: 'spec is required' }, 400, corsHeaders);
+                    }
+
+                    if (typeof body.spec === 'string') {
+                        content = body.spec;
+                    } else {
+                        try {
+                            content = JSON.stringify(body.spec, null, 2);
+                        } catch {
+                            return jsonResponse({ error: 'Unable to serialise spec to JSON' }, 400, corsHeaders);
+                        }
+                    }
+
+                    if (typeof body.filename === 'string' && body.filename.trim().length) {
+                        filename = body.filename.trim();
+                    }
+
+                    if (typeof body.customParsePrompt === 'string' && body.customParsePrompt.trim().length) {
+                        customPrompt = body.customParsePrompt;
+                    }
+
+                    if (
+                        typeof body.customParseSystemPrompt === 'string' &&
+                        body.customParseSystemPrompt.trim().length
+                    ) {
+                        customSystemPrompt = body.customParseSystemPrompt;
+                    }
+                } else {
+                    const formData = await request.formData();
+                    const fileEntry = formData.get('file');
+
+                    if (!fileEntry || typeof fileEntry === 'string') {
+                        return jsonResponse({ error: 'No file provided' }, 400, corsHeaders);
+                    }
+
+                    const file = fileEntry as File;
+                    content = await file.text();
+                    filename = file.name;
+
+                    const customParsePrompt = formData.get('customParsePrompt');
+                    const customParseSystemPrompt = formData.get('customParseSystemPrompt');
+
+                    if (typeof customParsePrompt === 'string' && customParsePrompt.trim().length) {
+                        customPrompt = customParsePrompt;
+                    }
+
+                    if (
+                        typeof customParseSystemPrompt === 'string' &&
+                        customParseSystemPrompt.trim().length
+                    ) {
+                        customSystemPrompt = customParseSystemPrompt;
+                    }
                 }
 
-                const file = fileEntry as File;
-                const content = await file.text();
-                const filename = file.name;
+                if (!content) {
+                    return jsonResponse({ error: 'No specification content provided' }, 400, corsHeaders);
+                }
 
-                const customParsePrompt = formData.get('customParsePrompt');
-                const customParseSystemPrompt = formData.get('customParseSystemPrompt');
+                const formatGuess = detectFormat(content, filename);
+
+                if (contentType.includes('application/json') && formatGuess === 'text') {
+                    return jsonResponse(
+                        { error: 'Unable to determine specification format. Provide a valid OpenAPI or supported specification.' },
+                        400,
+                        corsHeaders,
+                    );
+                }
 
                 const parseResult = await parseSpecToCSM(content, filename, env, {
-                    textPrompt:
-                        typeof customParsePrompt === 'string' && customParsePrompt.trim().length
-                            ? customParsePrompt
-                            : undefined,
-                    textSystemPrompt:
-                        typeof customParseSystemPrompt === 'string' && customParseSystemPrompt.trim().length
-                            ? customParseSystemPrompt
-                            : undefined,
+                    textPrompt: customPrompt,
+                    textSystemPrompt: customSystemPrompt,
                 });
 
                 await logAnalyticsEvent(env, 'parse', {
@@ -308,17 +422,40 @@ export default {
                     endpointCount: parseResult.csm.endpoints?.length || 0,
                 });
 
-                return jsonResponse(parseResult, 200, corsHeaders);
+                return jsonResponse(
+                    {
+                        ...parseResult,
+                        endpoints: parseResult.csm?.endpoints ?? [],
+                    },
+                    200,
+                    corsHeaders,
+                );
             }
 
             if (url.pathname === '/api/generate' && request.method === 'POST') {
                 resetGlobalLogger();
 
                 const body = await request.json<any>();
-                const { csm, endpointId, customPrompt, customSystemPrompt } = body;
+                const { endpointId, customPrompt, customSystemPrompt } = body;
+
+                let csm = body.csm;
+
+                if (!csm && Array.isArray(body.endpoints)) {
+                    const metadata = body.metadata || {};
+                    csm = {
+                        name: typeof metadata.name === 'string' && metadata.name.trim().length
+                            ? metadata.name.trim()
+                            : 'Generated Connector',
+                        summary: typeof metadata.description === 'string' ? metadata.description : undefined,
+                        endpoints: body.endpoints,
+                    };
+                    if (metadata.auth) {
+                        csm.auth = metadata.auth;
+                    }
+                }
 
                 if (!csm) {
-                    return jsonResponse({ error: 'CSM is required' }, 400, corsHeaders);
+                    return jsonResponse({ error: 'CSM or endpoints are required' }, 400, corsHeaders);
                 }
 
                 const generateResult = await generateCode(csm, env, {
@@ -382,17 +519,44 @@ export default {
                 return jsonResponse(installResult, 200, corsHeaders);
             }
 
+            if (url.pathname === '/api/tools/install' && request.method === 'PUT') {
+                resetGlobalLogger();
+
+                const body = await request.json<any>();
+                const resolvedName =
+                    typeof body.name === 'string' && body.name.trim().length
+                        ? body.name.trim()
+                        : typeof body.toolName === 'string' && body.toolName.trim().length
+                            ? body.toolName.trim()
+                            : '';
+                const { code, exports, metadata } = body;
+
+                if (!resolvedName || !code || !exports) {
+                    return jsonResponse({ error: 'name (or toolName), code, and exports are required' }, 400, corsHeaders);
+                }
+
+                const installResult = await installTool(resolvedName, code, exports, env, metadata);
+
+                if (installResult.success) {
+                    await logAnalyticsEvent(env, 'install', {
+                        toolName: resolvedName,
+                        exportsCount: Array.isArray(exports) ? exports.length : 0,
+                        metadata,
+                    });
+                }
+
+                return jsonResponse(installResult, 200, corsHeaders);
+            }
+
             if (url.pathname === '/api/chat' && request.method === 'POST') {
                 const body = await request.json<any>();
-                const { message, persona, autoExecuteTools = true } = body;
+                const { message, persona, autoExecuteTools = false } = body;
 
                 if (!message) {
                     return jsonResponse({ error: 'Message is required' }, 400, corsHeaders);
                 }
 
-                const sessionName = request.headers.get('X-Session-ID') || 'chat-session';
-                const sessionId = env.SESSION_STATE.idFromName(sessionName);
-                const sessionStub = env.SESSION_STATE.get(sessionId);
+                const sessionStub = getSessionStub(env, request);
 
                 // Add user message to history
                 await sessionStub.fetch('http://internal/add-message', {
@@ -402,9 +566,31 @@ export default {
 
                 const historyResp = await sessionStub.fetch('http://internal/get-history');
                 const history = await historyResp.json<any[]>();
+                const trimmedHistory = prepareHistoryForModel(history);
 
                 const toolSummary = await listTools(env);
                 const tools = Array.isArray(toolSummary.tools) ? toolSummary.tools : [];
+
+                let scenarioRunResults: ScenarioRunResult[] | null = null;
+                let scenarioRunSummary: string | null = null;
+
+                if (shouldRunSmokeSuite(message)) {
+                    const scenarioResp = await sessionStub.fetch('http://internal/scenarios/run', {
+                        method: 'POST',
+                        body: JSON.stringify({ trigger: 'chat' }),
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+
+                    const scenarioData = await scenarioResp.json<any>().catch(() => ({}));
+                    if (scenarioResp.ok) {
+                        const rawResults = Array.isArray(scenarioData?.results) ? scenarioData.results : [];
+                        scenarioRunResults = rawResults as ScenarioRunResult[];
+                        scenarioRunSummary = formatScenarioSuiteSummary(scenarioRunResults);
+                    } else {
+                        const errorMessage = scenarioData?.error || `Smoke suite failed with status ${scenarioResp.status}`;
+                        scenarioRunSummary = errorMessage;
+                    }
+                }
 
                 const explicitToolName =
                     typeof body.toolName === 'string' && body.toolName.trim().length
@@ -432,6 +618,8 @@ export default {
                     error?: string;
                 }> = [];
 
+                const shouldUseFunctionCalling = autoExecuteTools && tools.length > 0 && !invocationRequest;
+
                 if (invocationRequest) {
                     const execution = await executeToolCall(env, {
                         toolName: invocationRequest.toolName,
@@ -440,7 +628,7 @@ export default {
                         options: invocationRequest.options ?? {},
                     });
                     toolExecutions.push(execution);
-                } else if (autoExecuteTools && tools.length > 0) {
+                } else if (!shouldUseFunctionCalling && autoExecuteTools && tools.length > 0) {
                     // Use AI to decide which tool to call
                     const toolDecision = await decideToolUsage(message, tools, env);
 
@@ -458,11 +646,11 @@ export default {
                 // Build context for the AI response
                 const toolExecutionSummaries = toolExecutions.map((exec) => {
                     if (exec.success) {
-                        return formatToolExecutionSummary(exec.tool, exec.export, exec.result);
+                        return truncateForModel(formatToolExecutionSummary(exec.tool, exec.export, exec.result));
                     } else {
-                        return formatToolExecutionError(exec.tool, exec.export, exec.error || 'Unknown error');
+                        return truncateForModel(formatToolExecutionError(exec.tool, exec.export, exec.error || 'Unknown error'));
                     }
-                });
+                }).concat(scenarioRunSummary ? [truncateForModel(`Smoke test suite:\n${scenarioRunSummary}`)] : []);
 
                 let prompt = message;
                 if (toolExecutionSummaries.length > 0) {
@@ -476,33 +664,249 @@ export default {
                         : 'no exports reported';
                     const meta = tool.metadata || {};
                     const desc = meta.description || meta.endpoint || 'no description';
-                    return `- ${name}: ${desc}\n  Exports: ${exportsList}`;
+                    return truncateForModel(`- ${name}: ${desc}\n  Exports: ${exportsList}`);
                 });
 
                 const personaInstruction = resolvePersonaInstruction(persona);
 
                 const systemContent = [
-                    'You are the assistant for Cloudflare AI ToolSmith.',
+                    'You are a helpful AI assistant for Cloudflare AI ToolSmith.',
+                    'Be conversational, friendly, and natural. Respond to greetings warmly.',
                     'Always respond in clear plain text. Do not use Markdown formatting such as **bold**, bullet lists, or code fences unless the user explicitly requests them.',
-                    'Help users navigate the parse → generate → verify → install workflow and use their installed API connectors.',
+                    'You can help users with API connector workflows (parse, generate, verify, install) when they ask.',
                     personaInstruction,
                     installedDescriptions.length
-                        ? `\nInstalled API Connectors:\n${installedDescriptions.join('\n')}`
-                        : 'No connectors are installed yet. Guide the user through uploading an API spec, generating a connector, and installing it.',
+                        ? `\nAvailable API Connectors:\n${truncateForModel(installedDescriptions.join('\n'), 3000)}`
+                        : '',
                     toolSummary.error ? `\nRegistry error: ${toolSummary.error}` : '',
-                    toolExecutionSummaries.length > 0 ? `\nRecent tool execution:\n${toolExecutionSummaries.join('\n')}` : '',
+                    toolExecutionSummaries.length > 0 ? `\nRecent tool execution:\n${truncateForModel(toolExecutionSummaries.join('\n'), 2000)}` : '',
                 ]
                     .filter(Boolean)
                     .join('\n');
 
                 const contextMessages = [{ role: 'system', content: systemContent }];
+                
+                // Validate total token count before making AI call and trim if needed
+                const userMessage = { role: 'user' as const, content: prompt };
+                let finalHistory = trimmedHistory;
+                let allMessages = [...contextMessages, ...finalHistory, userMessage];
+                let estimatedTokens = estimateMessageTokens(allMessages as any);
+                
+                // If still over limit, aggressively trim history
+                if (estimatedTokens > MAX_MODEL_TOKENS) {
+                    const overageTokens = estimatedTokens - MAX_MODEL_TOKENS;
+                    const tokensToRemove = overageTokens + 1000; // Extra buffer
+                    const charsToRemove = tokensToRemove * CHARS_PER_TOKEN;
+                    
+                    // Remove oldest messages until we're under the limit
+                    let removedChars = 0;
+                    const newHistory = [];
+                    for (let i = finalHistory.length - 1; i >= 0; i--) {
+                        const msg = finalHistory[i];
+                        if (removedChars >= charsToRemove) {
+                            newHistory.unshift(msg);
+                        } else {
+                            removedChars += msg.content.length;
+                        }
+                    }
+                    finalHistory = newHistory;
+                    allMessages = [...contextMessages, ...finalHistory, userMessage];
+                    estimatedTokens = estimateMessageTokens(allMessages as any);
+                }
 
-                const aiResponse = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
-                    messages: [...contextMessages, ...history, { role: 'user', content: prompt }],
-                });
+                // Format tools for function calling if autoExecuteTools is enabled and no explicit tool was called
+                let toolSchemas = null;
+                if (shouldUseFunctionCalling) {
+                    // Limit to 5 tools max to prevent schema bloat (120k+ chars with 6 tools)
+                    const limitedTools = tools.slice(0, 5);
+                    toolSchemas = limitedTools.map((tool: any) => {
+                        const name = tool.name || tool.toolId || 'unknown';
+                        const meta = tool.metadata || {};
+                        const description = truncateForModel(meta.description || meta.endpoint || `Execute ${name} API connector`, 150);
+                        const exports = Array.isArray(tool.exports) ? tool.exports : [];
+                        
+                        // Limit exports to first 10 to prevent schema bloat
+                        const limitedExports = exports.slice(0, 10);
+                        const hasMore = exports.length > 10;
+                        
+                        const properties: Record<string, any> = {};
+                        if (limitedExports.length > 0) {
+                            const exportDesc = hasMore 
+                                ? `First ${limitedExports.length} of ${exports.length} exports: ${limitedExports.join(', ')}`
+                                : `Available exports: ${limitedExports.join(', ')}`;
+                            properties.exportName = {
+                                type: "string",
+                                description: truncateForModel(exportDesc, 200),
+                                enum: limitedExports
+                            };
+                        }
+                        
+                        // Keep params generic - tools can accept varied inputs
+                        properties.params = {
+                            type: "object",
+                            description: "Parameters object to pass to the tool function",
+                            additionalProperties: true
+                        };
+                        
+                        return {
+                            type: "function",
+                            function: {
+                                name: name,
+                                description: description,
+                                parameters: {
+                                    type: "object",
+                                    properties: properties,
+                                    required: exports.length > 0 ? ["exportName"] : []
+                                }
+                            }
+                        };
+                    });
+                }
+
+                let aiResponse: any;
+                try {
+                    const aiMessages = [...contextMessages, ...finalHistory, { role: 'user', content: prompt }];
+                    const aiConfig: any = { messages: aiMessages };
+                    if (toolSchemas) {
+                        aiConfig.tools = toolSchemas;
+                        aiConfig.tool_choice = "auto";
+                    }
+                    
+                    aiResponse = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', aiConfig);
+                } catch (error) {
+                    const errorDetails = describeAiError(error);
+                    const fallbackResponse = 'The AI service is currently unavailable. Please try again in a moment or verify your Cloudflare AI credentials.';
+
+                    await sessionStub.fetch('http://internal/add-message', {
+                        method: 'POST',
+                        body: JSON.stringify({ role: 'assistant', content: fallbackResponse }),
+                    });
+
+                    return jsonResponse(
+                        {
+                            response: fallbackResponse,
+                            toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined,
+                            scenarioResults: scenarioRunResults ?? undefined,
+                            scenarioSummary: scenarioRunSummary ?? undefined,
+                            error: {
+                                type: 'ai-unavailable',
+                                message: errorDetails,
+                            },
+                        },
+                        200,
+                        corsHeaders,
+                    );
+                }
 
                 let response = aiResponse.response || 'No response';
-                response = stripMarkdownEmphasis(response);
+                
+                if (aiResponse.tool_calls && Array.isArray(aiResponse.tool_calls) && aiResponse.tool_calls.length > 0) {
+                    for (const toolCall of aiResponse.tool_calls) {
+                        // Handle both Cloudflare format {name, arguments} and OpenAI format {function: {name, arguments}}
+                        const toolName = toolCall.function?.name || toolCall.name;
+                        const rawArgs = toolCall.function?.arguments || toolCall.arguments;
+                        
+                        if (toolName) {
+                            let args: Record<string, any> = {};
+                            let parseError: string | null = null;
+
+                            if (typeof rawArgs === 'string') {
+                                try {
+                                    args = JSON.parse(rawArgs);
+                                } catch (err) {
+                                    parseError = `Failed to parse tool arguments: ${(err as Error).message}`;
+                                    // Try to extract what we can
+                                    args = { _raw: rawArgs, _parseError: parseError };
+                                }
+                            } else if (rawArgs && typeof rawArgs === 'object') {
+                                args = rawArgs as Record<string, any>;
+                            } else {
+                                parseError = 'Tool arguments must be a JSON object or string';
+                                args = { _parseError: parseError };
+                            }
+
+                            // If parsing failed and we have no valid exportName, record error instead of calling
+                            if (parseError && !args.exportName) {
+                                toolExecutions.push({
+                                    tool: toolName,
+                                    success: false,
+                                    error: parseError,
+                                });
+                                continue;
+                            }
+
+                            const execution = await executeToolCall(env, {
+                                toolName: toolName,
+                                exportName: typeof args.exportName === 'string' ? args.exportName : undefined,
+                                params: (args.params && typeof args.params === 'object') ? args.params : {},
+                                options: {},
+                            });
+                            toolExecutions.push(execution);
+                        }
+                    }
+                    
+                    // Build tool result messages following OpenAI function calling pattern
+                    const toolResultMessages = aiResponse.tool_calls.map((toolCall: any, idx: number) => {
+                        // Handle both Cloudflare format {name, arguments} and OpenAI format {function: {name, arguments}}
+                        const toolName = toolCall?.function?.name || toolCall?.name || 'unknown';
+                        
+                        // Find the execution result for this tool call by name
+                        const exec = toolExecutions.find(e => 
+                            e.tool === toolName
+                        ) || {
+                            tool: toolName,
+                            success: false,
+                            error: 'Tool execution result not found',
+                            export: undefined
+                        };
+                        
+                        let content: string;
+                        if (exec.success) {
+                            content = formatToolExecutionSummary(exec.tool, exec.export, exec.result);
+                        } else {
+                            content = formatToolExecutionError(exec.tool, exec.export, exec.error || 'Unknown error');
+                        }
+                        
+                        return {
+                            role: 'tool',
+                            tool_call_id: toolCall.id || `call_${idx}`,
+                            name: toolName,
+                            content: content
+                        };
+                    });
+                    
+                    // Continue conversation with tool results - single AI call with proper function calling flow
+                    try {
+                        // Normalize tool_calls to OpenAI format for the follow-up request
+                        const normalizedToolCalls = aiResponse.tool_calls.map((tc: any, idx: number) => {
+                            const args = tc.function?.arguments || tc.arguments;
+                            return {
+                                id: tc.id || `call_${idx}`,
+                                type: tc.type || 'function',
+                                function: {
+                                    name: tc.function?.name || tc.name,
+                                    // Arguments must be a JSON string, not an object
+                                    arguments: typeof args === 'string' ? args : JSON.stringify(args)
+                                }
+                            };
+                        });
+                        
+                        const finalResponse = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+                            messages: [
+                                ...contextMessages,
+                                ...finalHistory,
+                                { role: 'user', content: prompt },
+                                { role: 'assistant', content: response, tool_calls: normalizedToolCalls },
+                                ...toolResultMessages
+                            ],
+                        });
+                        
+                        response = finalResponse.response || response;
+                    } catch (error) {
+                        const errorDetails = describeAiError(error);
+                        response = `${response}\n\n(Note: Unable to generate a follow-up response with the tool results because the AI service returned an error: ${errorDetails})`;
+                    }
+                }
 
                 // Add assistant message to history
                 await sessionStub.fetch('http://internal/add-message', {
@@ -513,7 +917,9 @@ export default {
                 return jsonResponse(
                     {
                         response,
-                        toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined
+                        toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined,
+                        scenarioResults: scenarioRunResults ?? undefined,
+                        scenarioSummary: scenarioRunSummary ?? undefined,
                     },
                     200,
                     corsHeaders
@@ -648,6 +1054,38 @@ async function logAnalyticsEvent(
     }
 }
 
+function getSessionStub(env: Env, request: Request): DurableObjectStub {
+    const sessionName = request.headers.get('X-Session-ID') || 'chat-session';
+    const sessionId = env.SESSION_STATE.idFromName(sessionName);
+    return env.SESSION_STATE.get(sessionId);
+}
+
+function shouldRunSmokeSuite(message: string): boolean {
+    if (!message) {
+        return false;
+    }
+    const normalized = message.toLowerCase();
+    return /\brerun smoke suite\b/.test(normalized) || /\brun smoke suite\b/.test(normalized) || /\brun smoke tests\b/.test(normalized);
+}
+
+function formatScenarioSuiteSummary(results: ScenarioRunResult[] | null): string {
+    if (!results || results.length === 0) {
+        return 'No saved scenarios were available to run.';
+    }
+
+    return results
+        .map((result) => {
+            const base = `Scenario "${result.name}"`;
+            if (result.success) {
+                const statusPart = typeof result.status === 'number' ? `status ${result.status}` : 'success';
+                const durationPart = typeof result.durationMs === 'number' ? `${result.durationMs} ms` : 'unknown duration';
+                return `${base} passed (${statusPart}, ${durationPart}).`;
+            }
+            return `${base} failed: ${result.error || 'Unknown error'}.`;
+        })
+        .join('\n');
+}
+
 function detectToolInvocation(message: string, tools: any[]): {
     toolName: string;
     exportName?: string;
@@ -737,8 +1175,98 @@ function formatResultForPrompt(result: any, limit = 1200): string {
     return text;
 }
 
+const MAX_HISTORY_MESSAGES = 16;
+const MAX_HISTORY_CHARS = 1800;
+const MAX_CONTEXT_SECTION_CHARS = 2000;
+const MAX_MODEL_TOKENS = 20000; // Leave buffer below 24k limit
+const CHARS_PER_TOKEN = 4; // Rough estimate
+
+function estimateTokens(text: string): number {
+    if (!text || typeof text !== 'string') {
+        return 0;
+    }
+    return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+function estimateMessageTokens(messages: Array<{ role: string; content: string }>): number {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return 0;
+    }
+    
+    let total = 0;
+    for (const msg of messages) {
+        // Rough OpenAI token formula: role + content + formatting overhead
+        total += estimateTokens(msg.role) + estimateTokens(msg.content) + 4;
+    }
+    return total;
+}
+
+function prepareHistoryForModel(history: any[]): Array<{ role: 'user' | 'assistant' | 'system'; content: string }> {
+    if (!Array.isArray(history) || history.length === 0) {
+        return [];
+    }
+
+    const recent = history.slice(-MAX_HISTORY_MESSAGES);
+    const prepared = recent.map((entry: any) => {
+        const role = normalizeRole(entry?.role);
+        const content = typeof entry?.content === 'string' ? truncateForModel(entry.content, MAX_HISTORY_CHARS) : '';
+
+        if (!role || !content.trim().length) {
+            return null;
+        }
+
+        return { role, content };
+    });
+
+    return prepared.filter((msg): msg is { role: 'user' | 'assistant' | 'system'; content: string } => msg !== null);
+}
+
+function normalizeRole(role: unknown): 'user' | 'assistant' | 'system' | null {
+    if (role === 'user' || role === 'assistant' || role === 'system') {
+        return role;
+    }
+    return null;
+}
+
+function truncateForModel(text: string, limit: number = MAX_CONTEXT_SECTION_CHARS): string {
+    if (typeof text !== 'string' || text.length === 0) {
+        return '';
+    }
+
+    if (text.length <= limit) {
+        return text;
+    }
+
+    return `${text.slice(0, Math.max(limit - 1, 0))}…`;
+}
+
 function stripMarkdownEmphasis(text: string): string {
-    return text.replace(/\*\*(.*?)\*\*/g, '$1').replace(/__(.*?)__/g, '$1');
+    if (!text) {
+        return text;
+    }
+
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/__(.*?)__/g, '$1')
+        .replace(/\*(?!\*)([^*]+?)\*(?!\*)/g, '$1')
+        .replace(/_(?!_)([^_]+?)_(?!_)/g, '$1');
+}
+
+function describeAiError(error: unknown): string {
+    if (!error) {
+        return 'Unknown error';
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    if (typeof error === 'object' && 'message' in error && typeof (error as any).message === 'string') {
+        return (error as any).message;
+    }
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return 'Unknown error';
+    }
 }
 
 function resolvePersonaInstruction(persona?: string): string {
@@ -749,6 +1277,8 @@ function resolvePersonaInstruction(persona?: string): string {
             return 'Act as a deployment assistant: prioritise guidance on publishing connectors and managing environments.';
         case 'troubleshooter':
             return 'Act as a troubleshooter: diagnose issues, propose fixes, and suggest verification steps.';
+        case 'technical':
+            return 'Adopt a technical persona: provide precise implementation detail, reference relevant APIs, and focus on actionable guidance for developers.';
         default:
             return '';
     }
