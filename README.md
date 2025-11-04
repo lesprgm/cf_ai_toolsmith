@@ -1,109 +1,208 @@
-# Cloudflare AI ToolSmith
+# 🛠️ Cloudflare AI ToolSmith
 
-Transform API specifications into production-ready Cloudflare Workers connectors in minutes. ToolSmith pairs an end-to-end workflow UI with Workers AI so teams can ingest a spec, generate a typed connector, validate the exports, and deploy the result to the Cloudflare edge without leaving the browser.
+> Transform API specifications into production-ready Cloudflare Workers connectors in minutes.
 
-## Architecture
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange)](https://workers.cloudflare.com/)
+
+ToolSmith pairs an end-to-end workflow UI with Workers AI so teams can ingest a spec, generate a typed connector, validate the exports, and deploy the result to the Cloudflare edge—all without leaving the browser.
+
+## 📋 Table of Contents
+
+- [Architecture](#-architecture)
+- [Key Features](#-key-features)
+- [Workflow](#-workflow)
+- [Quickstart](#-quickstart)
+- [User Input](#-user-input)
+- [Memory & State](#-memory--state)
+- [LLM Integration](#-llm-integration)
+- [Testing](#-testing)
+- [Documentation](#-documentation)
+- [License](#-license)
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TD
-  A[User Upload / Chat] -->|Spec file| B[/api/parse -> Common Spec Model]
-  B --> C[/api/generate\nWorkers AI creates connector]
-  C --> D[/api/verify\nstatic analysis & smoke tests]
-  D --> E[/api/install]
-  E --> F[ToolRegistry Durable Object]
-  F --> G[/api/chat]
-  G --> H[Installed connectors run via executeToolCall]
-  A --> I[/api/stream SSE]
-  I --> J[Workflow Console]
-  G --> K[SessionState Durable Object]
-  G --> L[Scenario Suite triggers saved requests]
-  subgraph Durable Objects
-    F
-    K
-  end
-  subgraph Workers AI
-    C
-  end
+    A[👤 User Upload / Chat] -->|Spec file| B[🔍 /api/parse]
+    B -->|Common Spec Model| C[🤖 /api/generate]
+    C -->|Generated Connector| D[✅ /api/verify]
+    D -->|Validated Code| E[📦 /api/install]
+    E --> F[(🗄️ ToolRegistry DO)]
+    F --> G[💬 /api/chat]
+    G --> H[⚙️ Execute Tool Call]
+    A --> I[📡 /api/stream SSE]
+    I --> J[🖥️ Workflow Console]
+    G --> K[(📝 SessionState DO)]
+    G --> L[🧪 Scenario Suite]
+    
+    style F fill:#f9f,stroke:#333,stroke-width:2px
+    style K fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
-- `workers/index.ts` routes API traffic, streams logs, and orchestrates AI/tool calls.
-- `workers/parser.ts` normalizes OpenAPI/GraphQL/text into the Common Spec Model.
-- `workers/generator.ts` prompts Workers AI to emit ES module connectors.
-- `workers/verifier.ts` checks generated exports before installation.
-- `workers/durable_objects` holds chat history (`SessionState`) and installed connectors (`ToolRegistry`).
-- `ui/pages/index.tsx` surfaces the full workflow, visual editor, live logs, and chat.
+### Core Components
 
-## Highlights
+| Component | Purpose |
+|-----------|---------|
+| **`workers/index.ts`** | Routes API traffic, streams logs, orchestrates AI/tool calls |
+| **`workers/parser.ts`** | Normalizes OpenAPI/GraphQL/text into Common Spec Model |
+| **`workers/generator.ts`** | Prompts Workers AI to emit ES module connectors |
+| **`workers/verifier.ts`** | Validates generated exports before installation |
+| **`workers/durable_objects`** | Manages chat history (`SessionState`) and connectors (`ToolRegistry`) |
+| **`ui/pages/index.tsx`** | Full workflow UI with visual editor, logs, and chat |
 
-- **Visual Spec Editor** – Drag endpoints from the parsed Common Spec Model into a canvas to generate connectors and see relationships at a glance.
-- **Scenario Suite** – Save sandbox requests, schedule recurring smoke runs, and trigger them from chat with “rerun smoke suite”.
-- **Real-time Console** – Stream structured logs over SSE alongside chat responses for rapid iteration.
-- **Prompt Controls** – Tweak parse/generate prompts from the Insights page to guide the LLM for specific APIs.
+## ✨ Key Features
 
-## Workflow
+### 🎨 Visual Spec Editor
+Drag endpoints from the parsed Common Spec Model into a canvas to generate connectors and visualize API relationships at a glance.
 
-1. **Parse** – Upload a spec via drag-and-drop; the worker returns a Common Spec Model summary.
-2. **Generate** – Use the visual editor or endpoint list to invoke Workers AI and build connector code.
-3. **Verify** – Run static export checks and smoke tests inside the worker runtime.
-4. **Install** – Persist verified connectors in the Tool Registry Durable Object.
-5. **Collaborate** – Chat with the AI assistant, visualize endpoints, and save sandbox scenarios that can be replayed or scheduled.
+### 🧪 Scenario Suite
+Save sandbox requests, schedule recurring smoke tests, and trigger them from chat with natural language commands like "rerun smoke suite".
 
-## User Input
+### 📊 Real-time Console
+Stream structured logs over SSE alongside chat responses for rapid debugging and iteration.
 
-- Specification uploads (OpenAPI, GraphQL introspection, JSON, XML, plain text).
-- Chat prompts that can trigger connector execution or re-run the smoke suite.
-- Sandbox test forms and saved scenarios for recurring API checks.
-- Prompt customization from the Insights page for parse and generate steps.
+### 🎯 Prompt Controls
+Customize parse/generate prompts from the Insights page to fine-tune LLM behavior for specific APIs.
 
-## Memory & State
+## 🔄 Workflow
 
-- **SessionState Durable Object** – Stores per-session chat history and saved sandbox scenarios, including latest run results and cadence.
-- **ToolRegistry Durable Object** – Persists installed connectors, compiled modules, and metadata for invocation.
-- **AnalyticsTracker Durable Object** – Captures workflow analytics (parse/generate/verify/install/test events).
-- In-browser state keeps UI selections (persona, endpoint detail, scenario drafts) scoped to the current session.
+```
+┌─────────┐    ┌──────────┐    ┌────────┐    ┌─────────┐    ┌────────────┐
+│  Parse  │ -> │ Generate │ -> │ Verify │ -> │ Install │ -> │ Collaborate│
+└─────────┘    └──────────┘    └────────┘    └─────────┘    └────────────┘
+```
 
-## LLM Used
+1. **📤 Parse** – Upload a spec via drag-and-drop; the worker returns a Common Spec Model summary.
+2. **⚙️ Generate** – Use the visual editor or endpoint list to invoke Workers AI and build connector code.
+3. **✅ Verify** – Run static export checks and smoke tests inside the worker runtime.
+4. **📦 Install** – Persist verified connectors in the Tool Registry Durable Object.
+5. **🤝 Collaborate** – Chat with the AI assistant, visualize endpoints, and save sandbox scenarios that can be replayed or scheduled.
 
-- `@cf/meta/llama-3.3-70b-instruct-fp8-fast` via Workers AI powers:
-  - Connector generation (`/api/generate`).
-  - Tool selection heuristics inside chat when auto-invocation is enabled.
-  - Conversational responses in `/api/chat`.
-- Deterministic verification and installation steps run without LLM involvement.
+## 📥 User Input
 
-## Quickstart
+ToolSmith accepts multiple input types:
+
+- **📄 Specification uploads**: OpenAPI, GraphQL introspection, JSON, XML, plain text
+- **💬 Chat prompts**: Trigger connector execution or re-run the smoke suite
+- **🧪 Sandbox test forms**: Create and save scenarios for recurring API checks
+- **⚙️ Prompt customization**: Fine-tune parse and generate steps from the Insights page
+
+## 💾 Memory & State
+
+### Durable Objects
+
+| Object | Purpose |
+|--------|---------|
+| **SessionState** | Stores per-session chat history and saved sandbox scenarios, including latest run results and cadence |
+| **ToolRegistry** | Persists installed connectors, compiled modules, and metadata for invocation |
+| **AnalyticsTracker** | Captures workflow analytics (parse/generate/verify/install/test events) |
+
+### Browser State
+In-browser state keeps UI selections (persona, endpoint detail, scenario drafts) scoped to the current session.
+
+## 🤖 LLM Integration
+
+**Model**: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` via Workers AI
+
+This powers:
+- ⚙️ Connector generation (`/api/generate`)
+- 🎯 Tool selection heuristics inside chat when auto-invocation is enabled
+- 💬 Conversational responses in `/api/chat`
+
+> **Note**: Deterministic verification and installation steps run without LLM involvement.
+
+## 🚀 Quickstart
+
+### Prerequisites
+
+- **Node.js** 18 or higher
+- **Cloudflare account** with Workers AI and Durable Objects enabled
+- **Wrangler CLI** authenticated to your account
 
 ```bash
-git clone https://github.com/<your-org>/cf_ai_toolsmith.git
-cd cf_ai_toolsmith
-npm install
-(cd ui && npm install)
+# Authenticate with Cloudflare
+wrangler login
+```
 
-npm run dev      # worker on http://localhost:8787
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/lesprgm/cf_ai_toolsmith.git
+cd cf_ai_toolsmith
+
+# Install dependencies
+npm install
+cd ui && npm install && cd ..
+
+# Start the development servers
+npm run dev      # Worker on http://localhost:8787
 npm run dev:ui   # UI on http://localhost:3000 (proxies /api/*)
 ```
 
-Prerequisites:
-- Node.js 18+
-- Cloudflare account with Workers AI and Durable Objects enabled
-- Wrangler CLI authenticated to your account (`wrangler login`)
-
-Deploy with `wrangler deploy`, then build the UI (`cd ui && npm run build`) and host `ui/dist` (Cloudflare Pages recommended).
-
-## Testing
+### Deployment
 
 ```bash
-npm test               # Full suite
-npm run test:unit
-npm run test:integration
-npm run test:e2e
+# Deploy the worker
+wrangler deploy
+
+# Build and deploy the UI
+cd ui
+npm run build
+# Upload ui/dist to Cloudflare Pages
 ```
 
-## Learn More
+> **Tip**: Cloudflare Pages is recommended for hosting the UI with automatic deployments.
 
-- `docs/QUICK_REFERENCE.md` – Shortcuts for running the workflow end-to-end.
-- `docs/WORKFLOW_COMPLETE.md` – Detailed walkthrough of the connector pipeline.
-- `docs/CHAT_FEATURE.md` – Deep dive on chat-driven tool execution and personas.
+## 🧪 Testing
 
-## License
+ToolSmith includes comprehensive test coverage:
 
-Distributed under the MIT License. See `LICENSE` for details.
+```bash
+# Run all tests
+npm test
+
+# Run specific test suites
+npm run test:unit         # Unit tests
+npm run test:integration  # Integration tests
+npm run test:e2e          # End-to-end tests
+
+# Watch mode for development
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+```
+
+## 📚 Documentation
+
+Explore detailed guides for specific features:
+
+| Document | Description |
+|----------|-------------|
+| **[Quick Reference](docs/QUICK_REFERENCE.md)** | Shortcuts for running the workflow end-to-end |
+| **[Complete Workflow](docs/WORKFLOW_COMPLETE.md)** | Detailed walkthrough of the connector pipeline |
+| **[Chat Feature](docs/CHAT_FEATURE.md)** | Deep dive on chat-driven tool execution and personas |
+
+## 🤝 Contributing
+
+We welcome contributions! Please feel free to submit issues and pull requests.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+
+---
+
+<div align="center">
+  <strong>Built with ❤️ using Cloudflare Workers AI</strong>
+</div>
