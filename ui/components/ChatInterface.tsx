@@ -1,5 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatContent(value: string): string {
+  const escaped = escapeHtml(value);
+  const withBold = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  return withBold.replace(/\n/g, '<br />');
+}
+
 const API_BASE =
   (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
 
@@ -145,7 +160,10 @@ export default function ChatInterface({ sessionId, persona, onPersonaChange }: C
                     : 'bg-slate-100 text-slate-900'
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                <div
+                  className="text-sm leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
+                />
                 <p className="text-xs mt-1 opacity-70">
                   {new Date(msg.timestamp).toLocaleTimeString()}
                 </p>

@@ -1,7 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import ConsoleLog from '../components/ConsoleLog';
-import ChatInterface, { PersonaKey } from '../components/ChatInterface';
-import { useSession } from '../context/SessionContext';
+import { useEffect, useMemo, useState } from 'react';
 import { usePromptSettings } from '../hooks/usePromptSettings';
 
 const API_BASE =
@@ -18,13 +15,15 @@ interface AnalyticsResponse {
   events?: AnalyticsEvent[];
 }
 
-export default function InsightsPage(): JSX.Element {
-  const { sessionId } = useSession();
+export default function InsightsPage({
+  onNavigate,
+}: {
+  onNavigate: (view: 'workflow' | 'insights') => void;
+}): JSX.Element {
   const { promptSettings, updatePromptSettings, restorePromptSettings } = usePromptSettings();
   const [analyticsEvents, setAnalyticsEvents] = useState<AnalyticsEvent[]>([]);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
-  const [persona, setPersona] = useState<PersonaKey>('default');
 
   const fetchAnalytics = async () => {
     setIsLoadingAnalytics(true);
@@ -59,13 +58,12 @@ export default function InsightsPage(): JSX.Element {
   }, [analyticsEvents]);
 
   return (
-    <div className="max-w-7xl mx-auto px-6 pb-16 space-y-10">
-      <header className="space-y-2">
-        <p className="text-sm uppercase tracking-wide text-slate-500">Insights</p>
-        <h1 className="text-3xl font-semibold text-slate-900">Usage & Tuning</h1>
-        <p className="text-slate-600 max-w-3xl">
-          Monitor connector activity, review realtime logs, adjust advanced prompts, and chat with
-          the assistant without cluttering the main workflow.
+    <div className="max-w-7xl mx-auto px-6 py-8 pb-16 space-y-10">
+      <header className="space-y-3">
+        <p className="text-sm uppercase tracking-wider text-slate-500 font-semibold">Insights</p>
+        <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 leading-tight">Usage & Tuning</h1>
+        <p className="text-lg text-slate-600 max-w-3xl leading-relaxed">
+          Monitor connector activity and adjust advanced prompts without cluttering the main workflow.
         </p>
       </header>
 
@@ -190,10 +188,19 @@ export default function InsightsPage(): JSX.Element {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <ConsoleLog sessionId={sessionId} />
-        <ChatInterface sessionId={sessionId} persona={persona} onPersonaChange={setPersona} />
-      </section>
+      <div className="card p-6 bg-slate-50 border border-dashed border-slate-300 text-sm text-slate-600">
+        Live workflow console output and the AI assistant now reside on the Workflow view so you can
+        iterate on connectors and get guidance side by side.
+      </div>
+      <div className="text-center">
+        <button
+          type="button"
+          onClick={() => onNavigate('workflow')}
+          className="text-sm text-slate-600 hover:text-slate-900"
+        >
+          ← Back to workflow
+        </button>
+      </div>
     </div>
   );
 }
