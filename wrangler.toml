@@ -6,22 +6,20 @@ compatibility_flags = ["nodejs_compat"]
 # AI Model binding
 [ai]
 binding = "AI"
+remote = true
 
 # Durable Objects for stateful sessions
 [[durable_objects.bindings]]
 name = "TOOL_REGISTRY"
 class_name = "ToolRegistry"
-script_name = "cf-ai-specforge"
 
 [[durable_objects.bindings]]
 name = "SESSION_STATE"
 class_name = "SessionState"
-script_name = "cf-ai-specforge"
 
 [[durable_objects.bindings]]
 name = "ANALYTICS"
 class_name = "AnalyticsTracker"
-script_name = "cf-ai-specforge"
 
 [[migrations]]
 tag = "v1"
