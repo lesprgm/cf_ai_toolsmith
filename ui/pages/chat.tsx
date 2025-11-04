@@ -18,6 +18,7 @@ interface Tool {
     metadata?: {
         description?: string;
         endpoint?: string;
+        [key: string]: any;
     };
     installedAt: string;
 }
@@ -37,7 +38,7 @@ export default function ChatPage() {
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
     const [tools, setTools] = useState<Tool[]>([]);
-    const [autoExecute, setAutoExecute] = useState(true);
+    const [autoExecute, setAutoExecute] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -157,18 +158,18 @@ export default function ChatPage() {
                                             <div className="font-semibold text-sm text-slate-900 mb-1">
                                                 {tool.name}
                                             </div>
-                                            {tool.metadata?.description && (
+                                            {tool.metadata?.description && typeof tool.metadata.description === 'string' && (
                                                 <div className="text-xs text-slate-600 mb-2">
                                                     {tool.metadata.description}
                                                 </div>
                                             )}
-                                            {tool.metadata?.endpoint && (
+                                            {tool.metadata?.endpoint && typeof tool.metadata.endpoint === 'string' && (
                                                 <div className="text-xs text-slate-500 mb-2 font-mono truncate">
                                                     {tool.metadata.endpoint}
                                                 </div>
                                             )}
                                             <div className="text-xs text-slate-500">
-                                                Exports: {tool.exports.join(', ')}
+                                                Exports: {Array.isArray(tool.exports) ? tool.exports.join(', ') : 'none'}
                                             </div>
                                         </div>
                                     ))}
@@ -226,8 +227,8 @@ export default function ChatPage() {
                                     >
                                         <div
                                             className={`max-w-[80%] rounded-lg p-4 ${msg.role === 'user'
-                                                    ? 'bg-orange-600 text-white'
-                                                    : 'bg-slate-100 text-slate-900'
+                                                ? 'bg-orange-600 text-white'
+                                                : 'bg-slate-100 text-slate-900'
                                                 }`}
                                         >
                                             <div className="text-sm font-semibold mb-1 opacity-75">
@@ -242,8 +243,8 @@ export default function ChatPage() {
                                                         <div
                                                             key={execIdx}
                                                             className={`text-xs p-3 rounded border-2 ${exec.success
-                                                                    ? 'bg-green-50 border-green-200 text-green-900'
-                                                                    : 'bg-red-50 border-red-200 text-red-900'
+                                                                ? 'bg-green-50 border-green-200 text-green-900'
+                                                                : 'bg-red-50 border-red-200 text-red-900'
                                                                 }`}
                                                         >
                                                             <div className="font-bold mb-1">
