@@ -5,25 +5,19 @@ Transform API specifications into production-ready Cloudflare Workers connectors
 ## Architecture
 
 ```mermaid
-graph TD
-  A[User Upload / Chat] -->|Spec file| B[/api/parse -> Common Spec Model]
-  B --> C[/api/generate\nWorkers AI creates connector]
-  C --> D[/api/verify\nstatic analysis & smoke tests]
-  D --> E[/api/install]
-  E --> F[ToolRegistry Durable Object]
-  F --> G[/api/chat]
-  G --> H[Installed connectors run via executeToolCall]
-  A --> I[/api/stream SSE]
-  I --> J[Workflow Console]
-  G --> K[SessionState Durable Object]
-  G --> L[Scenario Suite triggers saved requests]
-  subgraph Durable Objects
-    F
-    K
-  end
-  subgraph Workers AI
-    C
-  end
+graph LR
+  A[User Input] --> B[Parse Spec]
+  B --> C[Generate Connector]
+  C --> D[Verify Code]
+  D --> E[Install Tool]
+  E --> F[Chat Interface]
+  
+  G[Workers AI LLM] -.-> C
+  G -.-> F
+  
+  H[SessionState DO] -.-> F
+  I[ToolRegistry DO] -.-> E
+  I -.-> F
 ```
 
 - `workers/index.ts` routes API traffic, streams logs, and orchestrates AI/tool calls.
