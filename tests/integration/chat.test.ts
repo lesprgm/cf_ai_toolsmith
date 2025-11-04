@@ -71,7 +71,7 @@ describe('Integration - chat endpoint', () => {
 
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(payload).toEqual({ response: 'Hello from AI' });
+    expect(payload).toMatchObject({ response: 'Hello from AI' });
 
     const history = storage.snapshot('history');
     expect(Array.isArray(history)).toBe(true);

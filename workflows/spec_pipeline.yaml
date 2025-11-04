@@ -1,0 +1,115 @@
+name: spec_pipeline
+version: 1.0.0
+
+# Workflow trigger: Spec file uploaded
+on:
+  spec_upload:
+    input:
+      spec_id: string
+      session_id: string
+
+# Workflow steps
+steps:
+  # Step 1: Parse specification
+  - id: parse
+    name: Parse Specification
+    action: workers.ai.llama
+    input:
+      prompt: ${prompts.parse_spec}
+      spec_id: ${input.spec_id}
+    output:
+      common_spec: object
+
+  # Step 2: Normalize data model
+  - id: normalize
+    name: Normalize Spec Model
+    action: workers.transform
+    input:
+      spec: ${parse.output.common_spec}
+    output:
+      normalized_spec: object
+
+  # Step 3: Generate connectors for each endpoint
+  - id: generate
+    name: Generate Worker Connectors
+    action: workers.batch
+    for_each: ${normalize.output.normalized_spec.endpoints}
+    steps:
+      - action: workers.ai.llama
+        input:
+          prompt: ${prompts.generate_code}
+          endpoint: ${item}
+        output:
+          connector_code: string
+
+      - action: workers.store
+        input:
+          connector_id: ${item.id}
+          code: ${connector_code}
+
+  # Step 4: Verify each connector
+  - id: verify
+    name: Verify Connectors
+    action: workers.batch
+    for_each: ${generate.output.connectors}
+    steps:
+      - action: workers.test
+        input:
+          connector_id: ${item.id}
+          code: ${item.code}
+        output:
+          test_results: array
+
+      - action: workers.ai.llama
+        input:
+          prompt: ${prompts.test_connector}
+          code: ${item.code}
+        output:
+          review: object
+
+  # Step 5: Deploy verified connectors
+  - id: deploy
+    name: Deploy Verified Connectors
+    action: workers.deploy
+    condition: ${verify.output.all_passed}
+    input:
+      connectors: ${verify.output.verified_connectors}
+    output:
+      deployed_urls: array
+
+# Error handling
+on_error:
+  - action: workers.log
+    input:
+      level: error
+      message: ${error.message}
+      stack: ${error.stack}
+  
+  - action: durable_objects.session.log
+    input:
+      session_id: ${input.session_id}
+      log:
+        level: error
+        stage: ${current_step}
+        message: ${error.message}
+
+# Success notification
+on_success:
+  - action: durable_objects.session.log
+    input:
+      session_id: ${input.session_id}
+      log:
+        level: info
+        stage: deploy
+        message: "Pipeline completed successfully"
+        data:
+          connectors_generated: ${generate.output.count}
+          connectors_verified: ${verify.output.verified_count}
+          deployment_urls: ${deploy.output.deployed_urls}
+
+# Workflow timeout: 5 minutes
+timeout: 300s
+
+# Concurrency: Process up to 10 endpoints in parallel
+concurrency:
+  max_parallel: 10

@@ -1,0 +1,278 @@
+openapi: 3.0.0
+info:
+  title: Sample Pet Store API
+  version: 1.0.0
+  description: A simple Pet Store API for testing ToolSmith
+  contact:
+    name: API Support
+    email: support@petstore.example.com
+servers:
+  - url: https://api.petstore.example.com/v1
+    description: Production server
+paths:
+  /pets:
+    get:
+      summary: List all pets
+      description: Retrieve a paginated list of all pets in the store
+      operationId: listPets
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of pets to return
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          description: Number of pets to skip
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pet'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a new pet
+      description: Add a new pet to the store
+      operationId: createPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PetInput'
+      responses:
+        '201':
+          description: Pet created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /pets/{petId}:
+    get:
+      summary: Get a specific pet
+      description: Retrieve details of a pet by ID
+      operationId: getPetById
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: Unique identifier of the pet
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '404':
+          description: Pet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Update a pet
+      description: Update an existing pet's information
+      operationId: updatePet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PetInput'
+      responses:
+        '200':
+          description: Pet updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '404':
+          description: Pet not found
+    delete:
+      summary: Delete a pet
+      description: Remove a pet from the store
+      operationId: deletePet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Pet deleted successfully
+        '404':
+          description: Pet not found
+
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - id
+        - name
+        - species
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier
+        name:
+          type: string
+          description: Name of the pet
+          example: Fluffy
+        species:
+          type: string
+          description: Species of the pet
+          enum:
+            - dog
+            - cat
+            - bird
+            - fish
+            - other
+        breed:
+          type: string
+          description: Breed of the pet
+          example: Golden Retriever
+        age:
+          type: integer
+          description: Age in years
+          minimum: 0
+          maximum: 50
+        color:
+          type: string
+          description: Primary color
+          example: Golden
+        status:
+          type: string
+          description: Availability status
+          enum:
+            - available
+            - pending
+            - sold
+          default: available
+        createdAt:
+          type: string
+          format: date-time
+          description: When the pet was added to the store
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    PetInput:
+      type: object
+      required:
+        - name
+        - species
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        species:
+          type: string
+          enum:
+            - dog
+            - cat
+            - bird
+            - fish
+            - other
+        breed:
+          type: string
+          maxLength: 100
+        age:
+          type: integer
+          minimum: 0
+          maximum: 50
+        color:
+          type: string
+          maxLength: 50
+        status:
+          type: string
+          enum:
+            - available
+            - pending
+            - sold
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of items
+        limit:
+          type: integer
+          description: Items per page
+        offset:
+          type: integer
+          description: Current offset
+        hasMore:
+          type: boolean
+          description: Whether more items exist
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []
