@@ -1,167 +1,108 @@
 # Cloudflare AI ToolSmith
 
-Transform API specifications into production-ready Cloudflare Workers connectors in minutes.
-
-## Overview
-
-Cloudflare AI ToolSmith is a full-stack application built on the Cloudflare developer platform. Upload a spec (OpenAPI, GraphQL, JSON Schema, XML, or even plain text) and the system parses it, asks Workers AI to generate connector code, verifies the output, and stores approved connectors in a Durable Object registry. The web UI exposes the entire pipeline with real-time logging and a chat interface that can invoke installed tools.
+Transform API specifications into production-ready Cloudflare Workers connectors in minutes. ToolSmith pairs an end-to-end workflow UI with Workers AI so teams can ingest a spec, generate a typed connector, validate the exports, and deploy the result to the Cloudflare edge without leaving the browser.
 
 ## Architecture
 
-```
-User upload → /api/parse → Common Spec Model (CSM)
-            │
-            └─> /api/generate → AI-produced connector
-                          │
-                          └─> /api/verify → static export analysis
-                                       │
-                                       └─> /api/install → ToolRegistry Durable Object
-                                                     │
-                                                     └─> /api/chat invokes installed tools
+```mermaid
+graph TD
+  A[User Upload / Chat] -->|Spec file| B[/api/parse -> Common Spec Model]
+  B --> C[/api/generate\nWorkers AI creates connector]
+  C --> D[/api/verify\nstatic analysis & smoke tests]
+  D --> E[/api/install]
+  E --> F[ToolRegistry Durable Object]
+  F --> G[/api/chat]
+  G --> H[Installed connectors run via executeToolCall]
+  A --> I[/api/stream SSE]
+  I --> J[Workflow Console]
+  G --> K[SessionState Durable Object]
+  G --> L[Scenario Suite triggers saved requests]
+  subgraph Durable Objects
+    F
+    K
+  end
+  subgraph Workers AI
+    C
+  end
 ```
 
-- `workers/index.ts` routes all API requests, streams logs via SSE, and coordinates AI calls.
-- `workers/parser.ts` converts OpenAPI/GraphQL/text into a unified Common Spec Model.
+- `workers/index.ts` routes API traffic, streams logs, and orchestrates AI/tool calls.
+- `workers/parser.ts` normalizes OpenAPI/GraphQL/text into the Common Spec Model.
 - `workers/generator.ts` prompts Workers AI to emit ES module connectors.
-- `workers/verifier.ts` inspects the generated source to ensure export names/functions exist.
-- `workers/durable_objects/ToolRegistry.ts` stores approved connectors and exposes listing/invoke routes (invocation disabled during local development).
-- `workers/durable_objects/SessionState.ts` keeps the chat transcript for each session.
-- `ui/pages/index.tsx` provides the full workflow UI with upload, generation, verification, installation, live logs, and chat.
+- `workers/verifier.ts` checks generated exports before installation.
+- `workers/durable_objects` holds chat history (`SessionState`) and installed connectors (`ToolRegistry`).
+- `ui/pages/index.tsx` surfaces the full workflow, visual editor, live logs, and chat.
 
-## Repository Layout
+## Highlights
 
-```
-cf_ai_toolsmith/
-├── workers/                      # Worker source, utilities, DOs
-├── ui/                           # React application
-├── tests/                        # Vitest suites (unit, integration, e2e)
-├── prompts/                      # LLM prompt templates
-├── workflows/                    # Workflow pipeline configuration
-├── docs/                         # Feature write-ups & quick references
-├── examples/                     # Sample specifications (e.g., petstore.yaml)
-├── wrangler.toml                 # Worker + Durable Object config
-├── vite.config.ts                # Shared Vite config (re-exports UI config)
-└── README.md                     # This document
+- **Visual Spec Editor** – Drag endpoints from the parsed Common Spec Model into a canvas to generate connectors and see relationships at a glance.
+- **Scenario Suite** – Save sandbox requests, schedule recurring smoke runs, and trigger them from chat with “rerun smoke suite”.
+- **Real-time Console** – Stream structured logs over SSE alongside chat responses for rapid iteration.
+- **Prompt Controls** – Tweak parse/generate prompts from the Insights page to guide the LLM for specific APIs.
 
-## Getting Started
+## Workflow
 
-### Prerequisites
+1. **Parse** – Upload a spec via drag-and-drop; the worker returns a Common Spec Model summary.
+2. **Generate** – Use the visual editor or endpoint list to invoke Workers AI and build connector code.
+3. **Verify** – Run static export checks and smoke tests inside the worker runtime.
+4. **Install** – Persist verified connectors in the Tool Registry Durable Object.
+5. **Collaborate** – Chat with the AI assistant, visualize endpoints, and save sandbox scenarios that can be replayed or scheduled.
 
-- Node.js 18 or newer
-- npm (or pnpm/yarn if you prefer)
-- Cloudflare account with Workers, Durable Objects, R2, D1, and Workers AI enabled
-- Wrangler CLI authenticated to your Cloudflare account (`wrangler login`)
+## User Input
 
-### Install Dependencies
+- Specification uploads (OpenAPI, GraphQL introspection, JSON, XML, plain text).
+- Chat prompts that can trigger connector execution or re-run the smoke suite.
+- Sandbox test forms and saved scenarios for recurring API checks.
+- Prompt customization from the Insights page for parse and generate steps.
+
+## Memory & State
+
+- **SessionState Durable Object** – Stores per-session chat history and saved sandbox scenarios, including latest run results and cadence.
+- **ToolRegistry Durable Object** – Persists installed connectors, compiled modules, and metadata for invocation.
+- **AnalyticsTracker Durable Object** – Captures workflow analytics (parse/generate/verify/install/test events).
+- In-browser state keeps UI selections (persona, endpoint detail, scenario drafts) scoped to the current session.
+
+## LLM Used
+
+- `@cf/meta/llama-3.3-70b-instruct-fp8-fast` via Workers AI powers:
+  - Connector generation (`/api/generate`).
+  - Tool selection heuristics inside chat when auto-invocation is enabled.
+  - Conversational responses in `/api/chat`.
+- Deterministic verification and installation steps run without LLM involvement.
+
+## Quickstart
 
 ```bash
 git clone https://github.com/<your-org>/cf_ai_toolsmith.git
 cd cf_ai_toolsmith
 npm install
 (cd ui && npm install)
+
+npm run dev      # worker on http://localhost:8787
+npm run dev:ui   # UI on http://localhost:3000 (proxies /api/*)
 ```
 
-### Configure Cloudflare Resources
+Prerequisites:
+- Node.js 18+
+- Cloudflare account with Workers AI and Durable Objects enabled
+- Wrangler CLI authenticated to your account (`wrangler login`)
 
-1. **KV Namespace**
-   ```bash
-   wrangler kv:namespace create CACHE
-   ```
-   Add the generated ID to `wrangler.toml`:
-   ```toml
-   [[kv_namespaces]]
-   binding = "CACHE"
-   id = "<your-kv-id>"
-   ```
-
-2. **D1 Database**
-   ```bash
-   wrangler d1 create toolsmith_db
-   ```
-   Update `wrangler.toml` with the `database_id`, then create the tables:
-   ```bash
-   wrangler d1 execute toolsmith_db --command "
-   CREATE TABLE IF NOT EXISTS connectors (
-     id TEXT PRIMARY KEY,
-     spec_id TEXT NOT NULL,
-     endpoint_id TEXT NOT NULL,
-     name TEXT NOT NULL,
-     code TEXT NOT NULL,
-     verified INTEGER DEFAULT 0,
-     test_results TEXT,
-     created_at TEXT NOT NULL,
-     updated_at TEXT
-   );
-
-   CREATE TABLE IF NOT EXISTS tools (
-     id TEXT PRIMARY KEY,
-     name TEXT NOT NULL,
-     description TEXT,
-     connector_id TEXT NOT NULL,
-     version TEXT DEFAULT '1.0.0',
-     installed INTEGER DEFAULT 0,
-     endpoint TEXT,
-     metadata TEXT,
-     created_at TEXT NOT NULL
-   );
-   "
-   ```
-
-3. **R2 Bucket**
-   ```bash
-   wrangler r2 bucket create toolsmith-specs
-   ```
-   Reference the bucket in `wrangler.toml`:
-   ```toml
-   [[r2_buckets]]
-   binding = "SPECS_BUCKET"
-   bucket_name = "toolsmith-specs"
-   ```
-
-4. **Durable Objects & Workers AI**
-   - `ToolRegistry`, `SessionState`, and `AnalyticsTracker` classes are already declared in `wrangler.toml`.
-   - No extra configuration is required for Workers AI beyond enabling the feature in your account.
-
-### Local Development
-
-Start the worker and UI in separate terminals:
-
-```bash
-npm run dev         # Wrangler dev server on http://localhost:8787
-npm run dev:ui      # Vite dev server on http://localhost:3000 (proxies /api/*)
-```
-
-Visit `http://localhost:3000` to upload a specification. The right-hand console streams server-sent log events from `/api/stream`, and the chat panel talks to `/api/chat`.
-
-## UI Walkthrough
-
-## Deployment
-
-1. Deploy the worker:
-   ```bash
-   wrangler deploy
-   ```
-   Wrangler provisions Durable Objects using the `new_sqlite_classes` migration and publishes to `https://cf-ai-specforge.<your-account>.workers.dev`.
-2. Set the UI base URL so the frontend can reach the deployed worker:
-   - Create a `.env` during local builds or configure Cloudflare Pages with `VITE_WORKER_BASE_URL=https://cf-ai-specforge.<your-account>.workers.dev`.
-3. Build and deploy the UI (e.g., to Pages):
-   ```bash
-   (cd ui && npm run build)
-```
-Serve `ui/dist` or connect the repository to Cloudflare Pages.
+Deploy with `wrangler deploy`, then build the UI (`cd ui && npm run build`) and host `ui/dist` (Cloudflare Pages recommended).
 
 ## Testing
 
-Vitest covers unit, integration, and end-to-end scenarios:
-
 ```bash
 npm test               # Full suite
-npm run test:unit      # Unit tests
+npm run test:unit
 npm run test:integration
 npm run test:e2e
 ```
 
-The new tests include parser regressions (path parameters, security overrides), ToolRegistry behaviour, chat integration, and the workflow e2e path.
+## Learn More
+
+- `docs/QUICK_REFERENCE.md` – Shortcuts for running the workflow end-to-end.
+- `docs/WORKFLOW_COMPLETE.md` – Detailed walkthrough of the connector pipeline.
+- `docs/CHAT_FEATURE.md` – Deep dive on chat-driven tool execution and personas.
 
 ## License
 
