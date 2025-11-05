@@ -172,7 +172,8 @@ describe('E2E - Complete AI Agent Workflow', () => {
                 },
                 body: JSON.stringify({
                     message: 'What is the weather in San Francisco?',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -255,7 +256,7 @@ describe('E2E - Complete AI Agent Workflow', () => {
                     'Content-Type': 'application/json',
                     'X-Session-ID': 'user-1'
                 },
-                body: JSON.stringify({ message: 'User 1 message' })
+                body: JSON.stringify({ message: 'User 1 message', stream: false })
             }), env);
 
             // User 2
@@ -265,7 +266,7 @@ describe('E2E - Complete AI Agent Workflow', () => {
                     'Content-Type': 'application/json',
                     'X-Session-ID': 'user-2'
                 },
-                body: JSON.stringify({ message: 'User 2 message' })
+                body: JSON.stringify({ message: 'User 2 message', stream: false })
             }), env);
 
             // Histories should be separate (tested at SessionState level)
@@ -316,7 +317,7 @@ describe('E2E - Complete AI Agent Workflow', () => {
                     'Content-Type': 'application/json',
                     'X-Session-ID': 'long-chat'
                 },
-                body: JSON.stringify({ message: 'Final message' })
+                body: JSON.stringify({ message: 'Final message', stream: false })
             }), env);
 
             expect(response.status).toBe(200);
@@ -347,7 +348,8 @@ describe('E2E - Complete AI Agent Workflow', () => {
                 },
                 body: JSON.stringify({
                     message: 'How is the weather today?',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             }), env);
 
@@ -375,7 +377,8 @@ describe('E2E - Complete AI Agent Workflow', () => {
                 },
                 body: JSON.stringify({
                     message: 'What can you do?',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             }), env);
 

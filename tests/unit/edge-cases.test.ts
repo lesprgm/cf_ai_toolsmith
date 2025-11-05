@@ -216,7 +216,7 @@ describe('Edge Cases & Security', () => {
             const request = new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-                body: JSON.stringify({ message: 'Test recovery' })
+                body: JSON.stringify({ message: 'Test recovery', stream: false })
             });
 
             const response = await worker.fetch(request, env);
@@ -235,7 +235,7 @@ describe('Edge Cases & Security', () => {
             const request = new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-                body: JSON.stringify({ message: 'Test' })
+                body: JSON.stringify({ message: 'Test', stream: false })
             });
 
             const response = await worker.fetch(request, env);
@@ -254,7 +254,7 @@ describe('Edge Cases & Security', () => {
                     'Origin': 'https://example.com',
                     'X-Session-ID': 'test'
                 },
-                body: JSON.stringify({ message: 'Test CORS' })
+                body: JSON.stringify({ message: 'Test CORS', stream: false })
             });
 
             const response = await worker.fetch(request, env);
@@ -345,7 +345,7 @@ describe('Edge Cases & Security', () => {
             const request = new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: 'Test' })
+                body: JSON.stringify({ message: 'Test', stream: false })
             });
 
             const response = await worker.fetch(request, env);
@@ -361,7 +361,7 @@ describe('Edge Cases & Security', () => {
                     'Content-Type': 'application/json',
                     'X-Session-ID': '../../../etc/passwd'
                 },
-                body: JSON.stringify({ message: 'Test' })
+                body: JSON.stringify({ message: 'Test', stream: false })
             });
 
             const response = await worker.fetch(request, env);
@@ -393,7 +393,7 @@ describe('Edge Cases & Security', () => {
             const request = new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'X-Session-ID': 'test' },
-                body: JSON.stringify({ message: 'Test' })
+                body: JSON.stringify({ message: 'Test', stream: false })
             });
 
             const response = await worker.fetch(request, env);

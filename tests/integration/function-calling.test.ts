@@ -102,7 +102,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test-session' },
                 body: JSON.stringify({
                     message: 'What is the weather?',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -264,7 +265,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'What is 5 + 3?',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -332,7 +334,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'Get weather and news',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -377,7 +380,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'Use broken tool',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -416,7 +420,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'Test message',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -446,7 +451,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'Test message',
-                    autoExecuteTools: false
+                    autoExecuteTools: false,
+                    stream: false
                 })
             });
 
@@ -491,7 +497,8 @@ describe('Integration - Function Calling', () => {
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
                 body: JSON.stringify({
                     message: 'Get the data',
-                    autoExecuteTools: true
+                    autoExecuteTools: true,
+                    stream: false
                 })
             });
 
@@ -513,14 +520,14 @@ describe('Integration - Function Calling', () => {
             await worker.fetch(new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'session-1' },
-                body: JSON.stringify({ message: 'First message' })
+                body: JSON.stringify({ message: 'First message', stream: false })
             }), env);
 
             // Second message
             await worker.fetch(new Request('https://example.com/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'session-1' },
-                body: JSON.stringify({ message: 'Second message' })
+                body: JSON.stringify({ message: 'Second message', stream: false })
             }), env);
 
             const history = sessionStorage.snapshot('history');

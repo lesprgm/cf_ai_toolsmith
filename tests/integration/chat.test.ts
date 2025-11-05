@@ -64,7 +64,7 @@ describe('Integration - chat endpoint', () => {
         'Content-Type': 'application/json',
         'X-Session-ID': 'session-123'
       },
-      body: JSON.stringify({ message: 'Hi there' })
+      body: JSON.stringify({ message: 'Hi there', stream: false })
     });
 
     const response = await worker.fetch(request, env);
@@ -166,7 +166,7 @@ describe('Integration - chat endpoint', () => {
     const request = new Request('https://example.com/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-      body: JSON.stringify({ message: 'Test' })
+      body: JSON.stringify({ message: 'Test', stream: false })
     });
 
     await worker.fetch(request, env);
@@ -204,7 +204,7 @@ describe('Integration - chat endpoint', () => {
     const request = new Request('https://example.com/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-      body: JSON.stringify({ message: 'What tools are available?' })
+      body: JSON.stringify({ message: 'What tools are available?', stream: false })
     });
 
     await worker.fetch(request, env);
@@ -235,7 +235,7 @@ describe('Integration - chat endpoint', () => {
     const request = new Request('https://example.com/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-      body: JSON.stringify({ message: 'Hello there' })
+      body: JSON.stringify({ message: 'Hello there', stream: false })
     });
 
     const response = await worker.fetch(request, env);
@@ -282,7 +282,8 @@ describe('Integration - chat endpoint', () => {
         message: 'Run the tool',
         toolName: 'test',
         exportName: 'default',
-        params: { input: 'value' }
+        params: { input: 'value' },
+        stream: false
       })
     });
 
