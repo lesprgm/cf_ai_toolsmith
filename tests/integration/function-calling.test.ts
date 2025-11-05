@@ -121,7 +121,7 @@ describe('Integration - Function Calling', () => {
                         properties: {
                             exportName: {
                                 type: 'string',
-                                description: 'Which export to call: getWeather',
+                                description: 'Available exports: getWeather',
                                 enum: ['getWeather']
                             },
                             params: {
