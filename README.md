@@ -30,6 +30,99 @@ graph TB
   style J fill:#7dd3fc,stroke:#333,stroke-width:2px,color:#000
 ```
 
+## One-Minute Quickstart
+
+```bash
+git clone https://github.com/lesprgm/cf_ai_toolsmith.git && cd cf_ai_toolsmith
+npm install && (cd ui && npm install)
+echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" > .dev.vars
+npm run dev &    # Start worker on http://localhost:8787
+npm run dev:ui   # Start UI on http://localhost:5173
+# Open http://localhost:5173 → Upload examples/petstore.yaml → Chat: "List available pets"
+```
+
+![AI executing weather skill](screenshots/Screenshot%202025-11-05%20at%2010.59.04%20PM.png)
+_AI autonomously calling a weather API skill during conversation_
+
+## How to Run Everything
+
+### Required Environment Setup
+
+**1. Environment Variables**
+
+```bash
+# Create .dev.vars file (for local development):
+ENCRYPTION_KEY=<32-character-random-string>   # Generate: openssl rand -base64 32
+ENVIRONMENT=development
+LOG_LEVEL=debug
+
+# For production deployment:
+wrangler secret put ENCRYPTION_KEY            # Same key for production
+```
+
+**2. Durable Objects Configuration**
+
+Required bindings in `wrangler.toml`:
+
+```toml
+[[durable_objects.bindings]]
+name = "SESSION_STATE"
+class_name = "SessionState"
+script_name = "cf-ai-toolsmith"
+
+[[durable_objects.bindings]]
+name = "SKILL_REGISTRY"
+class_name = "SkillRegistry"
+script_name = "cf-ai-toolsmith"
+
+# Migration required on first deploy:
+[[migrations]]
+tag = "v1"
+new_classes = ["SessionState", "SkillRegistry"]
+```
+
+**3. Workers AI Binding**
+
+Model used: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`
+
+```toml
+[ai]
+binding = "AI"
+```
+
+**4. Multi-Tenancy Header**
+
+All API requests must include:
+
+```
+X-User-ID: <unique-user-identifier>
+```
+
+This header isolates skills and chat history per user. Each unique `X-User-ID` maps to a separate Durable Object instance.
+
+### Quick Verification
+
+```bash
+# 1. Start services
+npm run dev      # Worker on :8787
+npm run dev:ui   # UI on :5173
+
+# 2. Test worker health
+curl http://localhost:8787/api/health
+
+# 3. Test skill registration
+curl -X POST http://localhost:8787/api/skills/register \
+  -H "X-User-ID: test-user" \
+  -H "Content-Type: application/json" \
+  -d '{"apiName":"Test","spec":{...},"baseUrl":"https://api.example.com"}'
+
+# 4. Test chat (requires registered skills)
+curl -X POST http://localhost:8787/api/chat \
+  -H "X-User-ID: test-user" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello"}'
+```
+
 ### Core Components
 
 - **SkillRegistry DO** - Per-user API skill storage with encrypted credentials
@@ -154,7 +247,7 @@ const tools = skillsToAIToolSchemas(skills);
 const response = await AI.run(model, {
   messages: [...history, userMessage],
   tools: tools,
-  tool_choice: "auto"
+  tool_choice: "auto",
 });
 
 // 4. AI returns tool calls, worker executes them
