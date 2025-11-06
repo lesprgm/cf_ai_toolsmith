@@ -34,7 +34,6 @@ export default function SkillsPage() {
     const [registering, setRegistering] = useState(false);
     const [showRegisterForm, setShowRegisterForm] = useState(false);
 
-    // Form state
     const [apiName, setApiName] = useState('');
     const [apiKey, setApiKey] = useState('');
     const [specInput, setSpecInput] = useState('');

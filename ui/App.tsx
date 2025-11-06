@@ -1,24 +1,17 @@
 import { useCallback, useState } from 'react';
-import WorkflowPage from './pages/index';
-import InsightsPage from './pages/insights';
 import ChatPage from './pages/chat';
-import EditorPage from './pages/editor';
-import MonitoringPage from './pages/monitoring';
+import SkillsPage from './pages/skills';
 import { SessionProvider } from './context/SessionContext';
-import { WorkflowProvider } from './context/WorkflowContext';
 
-type AppView = 'workflow' | 'editor' | 'monitoring' | 'chat' | 'insights';
+type AppView = 'skills' | 'chat';
 
 function getInitialView(): AppView {
   if (typeof window === 'undefined') {
-    return 'workflow';
+    return 'skills';
   }
   const hash = window.location.hash;
-  if (hash === '#/editor') return 'editor';
-  if (hash === '#/monitoring') return 'monitoring';
-  if (hash === '#/insights') return 'insights';
   if (hash === '#/chat') return 'chat';
-  return 'workflow';
+  return 'skills';
 }
 
 function Navigation({
@@ -31,36 +24,37 @@ function Navigation({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navLinks = [
-    { id: 'workflow' as AppView, label: 'Workflow' },
-    { id: 'editor' as AppView, label: 'Editor' },
-    { id: 'monitoring' as AppView, label: 'Monitoring' },
+    { id: 'skills' as AppView, label: 'Skills' },
     { id: 'chat' as AppView, label: 'Chat' },
-    { id: 'insights' as AppView, label: 'Insights' },
   ];
 
   return (
-    <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+    <nav className="bg-gradient-to-r from-orange-600 via-orange-500 to-orange-600 shadow-lg sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-14">
+        <div className="flex justify-between items-center h-16">
           {/* Logo/Brand */}
           <div className="flex-shrink-0">
-            <h1 className="text-lg font-bold">
-              <span className="bg-gradient-to-r from-orange-500 to-orange-600 bg-clip-text text-transparent">
-                CF
-              </span>
-              <span className="text-slate-900"> ToolSmith</span>
-            </h1>
+            <button
+              onClick={() => onNavigate('skills')}
+              className="text-2xl font-bold text-white hover:opacity-90 transition-opacity flex items-center gap-2"
+              aria-label="Go to skills page"
+            >
+              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
+              </svg>
+              CF ToolSmith
+            </button>
           </div>
 
           {/* Desktop Navigation */}
           <div className="hidden sm:flex sm:items-center sm:space-x-1">
             {navLinks.map((link) => (
               <button
-                key={link.id}
+                key={link.id + link.label}
                 onClick={() => onNavigate(link.id)}
-                className={`px-3 py-1.5 text-sm font-medium rounded transition-colors ${current === link.id
-                    ? 'bg-orange-500 text-white'
-                    : 'text-slate-700 hover:bg-slate-100'
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${current === link.id
+                    ? 'bg-white text-orange-600 shadow-md'
+                    : 'text-white hover:bg-orange-400'
                   }`}
                 aria-current={current === link.id ? 'page' : undefined}
               >
@@ -73,8 +67,8 @@ function Navigation({
           <div className="flex items-center sm:hidden">
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="inline-flex items-center justify-center p-2 rounded-md text-slate-700 hover:bg-slate-100 focus:outline-none"
-              aria-expanded={isMobileMenuOpen}
+              className="inline-flex items-center justify-center p-2 rounded-md text-white hover:bg-orange-400 focus:outline-none"
+              aria-expanded={isMobileMenuOpen ? 'true' : 'false'}
               aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
             >
               {isMobileMenuOpen ? (
@@ -93,18 +87,18 @@ function Navigation({
 
       {/* Mobile menu */}
       {isMobileMenuOpen && (
-        <div className="sm:hidden border-t border-slate-200">
+        <div className="sm:hidden border-t border-orange-400">
           <div className="px-2 pt-2 pb-2 space-y-1">
             {navLinks.map((link) => (
               <button
-                key={link.id}
+                key={link.id + link.label}
                 onClick={() => {
                   onNavigate(link.id);
                   setIsMobileMenuOpen(false);
                 }}
                 className={`block w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors ${current === link.id
-                    ? 'bg-orange-500 text-white'
-                    : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-white text-orange-600'
+                    : 'text-white hover:bg-orange-400'
                   }`}
                 aria-current={current === link.id ? 'page' : undefined}
               >
@@ -131,13 +125,7 @@ export default function App(): JSX.Element {
     setTimeout(() => {
       setView(next);
       if (typeof window !== 'undefined') {
-        if (next === 'insights') {
-          window.location.hash = '#/insights';
-        } else if (next === 'editor') {
-          window.location.hash = '#/editor';
-        } else if (next === 'monitoring') {
-          window.location.hash = '#/monitoring';
-        } else if (next === 'chat') {
+        if (next === 'chat') {
           window.location.hash = '#/chat';
         } else {
           window.location.hash = '';
@@ -149,23 +137,15 @@ export default function App(): JSX.Element {
 
   return (
     <SessionProvider>
-      <WorkflowProvider>
-        <Navigation current={view} onNavigate={navigate} />
-        <main className={`bg-slate-50 min-h-screen transition-opacity duration-150 ${isTransitioning ? 'opacity-50' : 'opacity-100'
-          }`}>
-          {view === 'workflow' ? (
-            <WorkflowPage onNavigate={navigate} />
-          ) : view === 'editor' ? (
-            <EditorPage onNavigate={navigate} />
-          ) : view === 'monitoring' ? (
-            <MonitoringPage />
-          ) : view === 'chat' ? (
-            <ChatPage />
-          ) : (
-            <InsightsPage onNavigate={navigate} />
-          )}
-        </main>
-      </WorkflowProvider>
+      <Navigation current={view} onNavigate={navigate} />
+      <main className={`bg-slate-50 min-h-screen transition-opacity duration-150 ${isTransitioning ? 'opacity-50' : 'opacity-100'
+        }`}>
+        {view === 'chat' ? (
+          <ChatPage />
+        ) : (
+          <SkillsPage />
+        )}
+      </main>
     </SessionProvider>
   );
 }

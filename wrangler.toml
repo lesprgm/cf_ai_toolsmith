@@ -12,10 +12,6 @@ binding = "AI"
 
 # Durable Objects for stateful sessions
 [[durable_objects.bindings]]
-name = "TOOL_REGISTRY"
-class_name = "ToolRegistry"
-
-[[durable_objects.bindings]]
 name = "SESSION_STATE"
 class_name = "SessionState"
 
@@ -25,7 +21,7 @@ class_name = "SkillRegistry"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["ToolRegistry", "SessionState", "SkillRegistry"]
+new_sqlite_classes = ["SessionState", "SkillRegistry"]
 
 # Optional D1 database (uncomment if needed)
 # [[d1_databases]]
