@@ -2,7 +2,7 @@ export interface Env {
   AI: any;
   TOOL_REGISTRY: DurableObjectNamespace;
   SESSION_STATE: DurableObjectNamespace;
-  ANALYTICS: DurableObjectNamespace;
+  SKILL_REGISTRY: DurableObjectNamespace;
   // DB?: D1Database; // optional
 }
 
