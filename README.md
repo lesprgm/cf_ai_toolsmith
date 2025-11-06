@@ -41,7 +41,7 @@ npm run dev:ui   # Start UI on http://localhost:5173
 # Open http://localhost:5173 → Upload examples/petstore.yaml → Chat: "List available pets"
 ```
 
-![AI executing weather skill](screenshots/Screenshot%202025-11-05%20at%2010.59.04%20PM.png)
+![AI executing weather skill](screenshots/screenshot1.png)
 _AI autonomously calling a weather API skill during conversation_
 
 ## How to Run Everything
