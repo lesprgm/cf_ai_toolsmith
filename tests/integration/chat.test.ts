@@ -41,6 +41,19 @@ const createSessionStateNamespace = () => {
   };
 };
 
+const createSkillRegistryStub = (apis: Record<string, any> = {}) => ({
+  idFromName: () => ({ toString: () => 'skill-registry-id' }),
+  get: () => ({
+    fetch: async (url: string | URL, init?: RequestInit) => {
+      const request = typeof url === 'string' ? new Request(url, init) : new Request(url, init);
+      if (request.url.includes('/get-skills')) {
+        return new Response(JSON.stringify({ apis }), { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    }
+  })
+});
+
 describe('Integration - chat endpoint', () => {
   it('persists chat messages via SessionState durable object', async () => {
     const { namespace, storage } = createSessionStateNamespace();
@@ -50,12 +63,7 @@ describe('Integration - chat endpoint', () => {
         run: async () => ({ response: 'Hello from AI' })
       },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({ error: 'Tool not found' }), { status: 404 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub()
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -86,12 +94,7 @@ describe('Integration - chat endpoint', () => {
     const env = {
       AI: { run: async () => ({ response: 'OK' }) },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({ tools: [] }), { status: 200 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub()
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -118,12 +121,7 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({ tools: [] }), { status: 200 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub()
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -142,7 +140,7 @@ describe('Integration - chat endpoint', () => {
     expect(systemMessage.content).toContain('technical');
   });
 
-  it('instructs AI not to use markdown via system prompt', async () => {
+  it('positions AI as a skills-enabled assistant via system prompt', async () => {
     const { namespace } = createSessionStateNamespace();
 
     let systemPrompt = '';
@@ -155,12 +153,7 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({ tools: [] }), { status: 200 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub()
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -171,13 +164,25 @@ describe('Integration - chat endpoint', () => {
 
     await worker.fetch(request, env);
 
-    expect(systemPrompt).toContain('Do not use Markdown formatting');
+    expect(systemPrompt).toContain('You are a helpful AI assistant.');
+    expect(systemPrompt).toContain('ONLY use skills when the user explicitly asks');
   });
 
-  it('includes installed tools in system context', async () => {
+  it('includes registered skills in system context', async () => {
     const { namespace } = createSessionStateNamespace();
 
     let systemContent = '';
+    const mockApis = {
+      weather: {
+        apiName: 'weather',
+        skills: [
+          { name: 'getWeather', description: 'Get current weather', method: 'GET', path: '/weather', parameters: [] },
+          { name: 'getForecast', description: 'Get weather forecast', method: 'GET', path: '/forecast', parameters: [] }
+        ],
+        baseUrl: 'https://api.weather.example',
+        metadata: { title: 'Weather API connector', version: '1.0' }
+      }
+    };
     const env = {
       AI: {
         run: async (_model: string, config: any) => {
@@ -187,31 +192,20 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({
-            tools: [{
-              name: 'weather',
-              exports: ['getWeather', 'getForecast'],
-              metadata: { description: 'Weather API connector' }
-            }]
-          }), { status: 200 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub(mockApis)
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-      body: JSON.stringify({ message: 'What tools are available?', stream: false })
+      body: JSON.stringify({ message: 'What skills are available?', stream: false })
     });
 
-    await worker.fetch(request, env);
+    const response = await worker.fetch(request, env);
 
     expect(systemContent).toContain('weather');
-    expect(systemContent).toContain('Weather API connector');
-    expect(systemContent).toContain('getWeather, getForecast');
+    expect(systemContent).toContain('getWeather');
+    expect(systemContent).toContain('getForecast');
   });
 
   it('returns a graceful response when the AI service fails', async () => {
@@ -224,12 +218,7 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      TOOL_REGISTRY: {
-        idFromName: () => ({ toString: () => 'tool-registry-id' }),
-        get: () => ({
-          fetch: async () => new Response(JSON.stringify({ tools: [] }), { status: 200 })
-        })
-      }
+      SKILL_REGISTRY: createSkillRegistryStub()
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -246,7 +235,7 @@ describe('Integration - chat endpoint', () => {
     expect(result.error).toMatchObject({ type: 'ai-unavailable' });
   });
 
-  it('handles explicit tool invocation', async () => {
+  it.skip('(DEPRECATED - tool execution removed) handles explicit tool invocation', async () => {
     const { namespace } = createSessionStateNamespace();
 
     const env = {
