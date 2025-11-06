@@ -1,20 +1,21 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@ui': resolve(__dirname, './'),
-      '@': resolve(__dirname, '../workers'),
+      '@ui': path.resolve(__dirname, './'),
+      '@': path.resolve(__dirname, '../workers'),
     },
   },
   server: {
-    port: 3000,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:8787',
@@ -23,7 +24,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: resolve(__dirname, './dist'),
+    outDir: path.resolve(__dirname, './dist'),
     emptyOutDir: true,
   },
 });

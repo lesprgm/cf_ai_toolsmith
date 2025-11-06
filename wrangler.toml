@@ -3,10 +3,12 @@ main = "workers/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+[dev]
+port = 8787
+
 # AI Model binding
 [ai]
 binding = "AI"
-remote = true
 
 # Durable Objects for stateful sessions
 [[durable_objects.bindings]]
@@ -18,16 +20,12 @@ name = "SESSION_STATE"
 class_name = "SessionState"
 
 [[durable_objects.bindings]]
-name = "ANALYTICS"
-class_name = "AnalyticsTracker"
+name = "SKILL_REGISTRY"
+class_name = "SkillRegistry"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["ToolRegistry", "SessionState"]
-
-[[migrations]]
-tag = "v2"
-new_sqlite_classes = ["AnalyticsTracker"]
+new_sqlite_classes = ["ToolRegistry", "SessionState", "SkillRegistry"]
 
 # Optional D1 database (uncomment if needed)
 # [[d1_databases]]
