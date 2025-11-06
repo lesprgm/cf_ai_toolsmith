@@ -1,103 +1,240 @@
 # Cloudflare AI ToolSmith
 
-Transform API specifications into production-ready Cloudflare Workers connectors in minutes. ToolSmith pairs an end-to-end workflow UI with Workers AI so teams can ingest a spec, generate a typed connector, validate the exports, and deploy the result to the Cloudflare edge without leaving the browser.
+![Platform](https://img.shields.io/badge/platform-Cloudflare%20Workers-orange)
+![AI Model](https://img.shields.io/badge/AI-Llama%203.3%2070B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+Give AI agents instant access to any API. Upload an OpenAPI specification, and chat with an AI that can autonomously execute your APIs in real-time.
+
+## Overview
+
+ToolSmith is an AI agent platform built on Cloudflare Workers that transforms OpenAPI specifications into executable AI skills. Upload an API spec, and an AI assistant gains the ability to call those APIs during conversations—executing real HTTP requests and returning results without writing code.
 
 ## Architecture
 
 ```mermaid
-graph TD
-  A[User Input] --> B[Parse Spec]
-  B --> C[Generate Connector]
-  C --> D[Verify Code]
-  D --> E[Install Tool]
-  E --> F[Chat Interface]
-  
-  G[Workers AI LLM] -.-> C
-  G -.-> F
-  
-  H[SessionState DO] -.-> F
-  I[ToolRegistry DO] -.-> E
-  I -.-> F
+graph TB
+    A[Upload OpenAPI Spec] --> B[Parse Operations]
+    B --> C[SkillRegistry DO<br/>stores per-user skills]
+    
+    D[User Chats] --> E[Load User Skills]
+    E --> F[AI + Function Calling]
+    F -->|Chooses Skills| G[Execute HTTP Request]
+    G --> H[Stream Results]
+    H --> I[AI Interprets & Responds]
+    
+    J[SessionState DO<br/>chat history] -.->|Context| D
+    K[X-User-ID Header] -.->|Isolates| C
+    
+  style C fill:#ffd166,stroke:#333,stroke-width:2px,color:#000
+  style J fill:#7dd3fc,stroke:#333,stroke-width:2px,color:#000
 ```
 
-- `workers/index.ts` routes API traffic, streams logs, and orchestrates AI/tool calls.
-- `workers/parser.ts` normalizes OpenAPI/GraphQL/text into the Common Spec Model.
-- `workers/generator.ts` prompts Workers AI to emit ES module connectors.
-- `workers/verifier.ts` checks generated exports before installation.
-- `workers/durable_objects` holds chat history (`SessionState`) and installed connectors (`ToolRegistry`).
-- `ui/pages/index.tsx` surfaces the full workflow, visual editor, live logs, and chat.
+### Core Components
 
-## Highlights
-
-- **Visual Spec Editor** – Drag endpoints from the parsed Common Spec Model into a canvas to generate connectors and see relationships at a glance.
-- **Scenario Suite** – Save sandbox requests, schedule recurring smoke runs, and trigger them from chat with “rerun smoke suite”.
-- **Real-time Console** – Stream structured logs over SSE alongside chat responses for rapid iteration.
-- **Prompt Controls** – Tweak parse/generate prompts from the Insights page to guide the LLM for specific APIs.
+- **SkillRegistry DO** - Per-user API skill storage with encrypted credentials
+- **Skill Parser** - Converts OpenAPI specs to AI tool schemas, executes skills via HTTP
+- **Chat Orchestrator** - Loads skills, orchestrates function calling, streams results
+- **SessionState DO** - Maintains conversation history per session
+- **Skills UI** - Upload, manage, and delete registered APIs
+- **Chat UI** - Real-time streaming chat with skill execution display
 
 ## Workflow
 
-1. **Parse** – Upload a spec via drag-and-drop; the worker returns a Common Spec Model summary.
-2. **Generate** – Use the visual editor or endpoint list to invoke Workers AI and build connector code.
-3. **Verify** – Run static export checks and smoke tests inside the worker runtime.
-4. **Install** – Persist verified connectors in the Tool Registry Durable Object.
-5. **Collaborate** – Chat with the AI assistant, visualize endpoints, and save sandbox scenarios that can be replayed or scheduled.
+### 1. Register APIs as Skills
+
+Upload OpenAPI Spec → System parses operations → Skills stored per-user
+
+```plaintext
+Example: Upload GitHub's OpenAPI spec
+Result: 200+ operations become AI skills (listRepositories, createIssue, etc.)
+```
+
+### 2. Chat with Skill-Enabled AI
+
+User Question → AI loads your skills → AI chooses appropriate skill(s) → Executes HTTP request → Streams results
+
+```plaintext
+User: "What's the weather in NYC?"
+
+AI process:
+1. Loads user's registered Weather API skill
+2. Chooses: getCurrentWeather(city="New York")
+3. Executes: GET https://api.weather.com/current?city=New+York
+4. Returns: {"temp": 68, "conditions": "Sunny"}
+5. Responds: "The current weather in NYC is 68°F and sunny."
+```
+
+### 3. Multi-Skill Orchestration
+
+AI can chain multiple skills autonomously:
+
+```plaintext
+User: "Find all Cloudflare repos with >1000 stars and save to Airtable"
+
+AI executes:
+1. listRepositories(org="cloudflare")
+2. Filters locally: stars > 1000
+3. createRecords(base="projects", records=[...])
+```
 
 ## User Input
 
-- Specification uploads (OpenAPI, GraphQL introspection, JSON, XML, plain text).
-- Chat prompts that can trigger connector execution or re-run the smoke suite.
-- Sandbox test forms and saved scenarios for recurring API checks.
-- Prompt customization from the Insights page for parse and generate steps.
+### Skills Page
+
+1. Click "Skills" in navigation
+2. Upload OpenAPI spec (JSON/YAML) or paste directly
+3. Enter API name (e.g., "Weather API")
+4. Enter API key (if required)
+5. Click "Register API"
+6. View registered skills in table
+
+### Chat Page
+
+1. Click "Chat" in navigation
+2. Type natural language queries
+3. Watch AI autonomously execute skills
+4. See detailed results before AI's response
+
+### Example Interactions
+
+**Single API:**
+```
+User: "What's the weather in Paris?"
+AI: Executes getCurrentWeather(location="Paris")
+```
+
+**Multi-API:**
+```
+User: "List my GitHub starred repos about 'ai' and save to Airtable"
+AI: Executes listStarredRepos() → filters → createRecords()
+```
 
 ## Memory & State
 
-- **SessionState Durable Object** – Stores per-session chat history and saved sandbox scenarios, including latest run results and cadence.
-- **ToolRegistry Durable Object** – Persists installed connectors, compiled modules, and metadata for invocation.
-- **AnalyticsTracker Durable Object** – Captures workflow analytics (parse/generate/verify/install/test events).
-- In-browser state keeps UI selections (persona, endpoint detail, scenario drafts) scoped to the current session.
+### Durable Objects Storage
 
-## LLM Used
+**SkillRegistry** (`workers/durable_objects/SkillRegistry.ts`)
+- Stores per-user registered APIs and their skills
+- Key structure: `user:{userId}` → UserSkills object
+- Contains: API name, base URL, encrypted API key, skill definitions
+- Multi-tenant isolation via `X-User-ID` header
 
-- `@cf/meta/llama-3.3-70b-instruct-fp8-fast` via Workers AI powers:
-  - Connector generation (`/api/generate`).
-  - Tool selection heuristics inside chat when auto-invocation is enabled.
-  - Conversational responses in `/api/chat`.
-- Deterministic verification and installation steps run without LLM involvement.
+**SessionState** (`workers/durable_objects/SessionState.ts`)
+- Maintains chat conversation history per session
+- Key structure: `history` → Message[] array
+- Enables context-aware conversations across page refreshes
+- Auto-trimmed when history exceeds token limits
 
-## Quickstart
+### Data Flow
+
+```
+User uploads spec → SkillRegistry DO stores skills
+User chats → Worker loads skills from SkillRegistry
+AI function calls → Worker executes HTTP request
+Results → SessionState DO stores in history
+```
+
+## LLM Integration
+
+### Model
+
+**`@cf/meta/llama-3.3-70b-instruct-fp8-fast`** via Cloudflare Workers AI
+
+### Function Calling
+
+```javascript
+// 1. Load user's skills
+const skills = await loadUserSkills(userId);
+
+// 2. Convert to OpenAI-compatible tool schemas
+const tools = skillsToAIToolSchemas(skills);
+
+// 3. AI call with tools
+const response = await AI.run(model, {
+  messages: [...history, userMessage],
+  tools: tools,
+  tool_choice: "auto"
+});
+
+// 4. AI returns tool calls, worker executes them
+if (response.tool_calls) {
+  for (const call of response.tool_calls) {
+    const result = await executeSkill(call.name, call.arguments);
+  }
+}
+```
+
+### Capabilities
+
+- Autonomous function calling based on user intent
+- Parameter extraction from natural language
+- Multi-turn context using chat history
+- Error interpretation and recovery
+- Multi-skill orchestration
+- Streaming responses via Server-Sent Events
+
+### Decision-Making
+
+- **When to use skills**: Based on user intent and available operations
+- **Which skill to use**: Matches query to skill descriptions
+- **What parameters to pass**: Extracts from query or requests clarification
+- **How to handle errors**: Retries or explains limitations
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- Cloudflare account with Workers AI and Durable Objects enabled
+- Wrangler CLI authenticated (`wrangler login`)
+
+### Local Development
 
 ```bash
-git clone https://github.com/<your-org>/cf_ai_toolsmith.git
+git clone https://github.com/lesprgm/cf_ai_toolsmith.git
 cd cf_ai_toolsmith
 npm install
 (cd ui && npm install)
 
-npm run dev      # worker on http://localhost:8787
-npm run dev:ui   # UI on http://localhost:3000 (proxies /api/*)
+npm run dev
+npm run dev:ui
 ```
 
-Prerequisites:
-- Node.js 18+
-- Cloudflare account with Workers AI and Durable Objects enabled
-- Wrangler CLI authenticated to your account (`wrangler login`)
+### Deploy to Production
 
-Deploy with `wrangler deploy`, then build the UI (`cd ui && npm run build`) and host `ui/dist` (Cloudflare Pages recommended).
+```bash
+wrangler deploy
+cd ui && npm run build
+npx wrangler pages deploy dist --project-name=toolsmith
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete instructions.
 
 ## Testing
 
 ```bash
-npm test               # Full suite
-npm run test:unit
-npm run test:integration
-npm run test:e2e
+npm test                  # Run full suite (124 tests)
+npm run test:unit         # Unit tests
+npm run test:integration  # Integration tests
+npm run test:coverage     # Coverage report
 ```
 
-## Learn More
+## Technical Stack
 
-- `docs/QUICK_REFERENCE.md` – Shortcuts for running the workflow end-to-end.
-- `docs/WORKFLOW_COMPLETE.md` – Detailed walkthrough of the connector pipeline.
-- `docs/CHAT_FEATURE.md` – Deep dive on chat-driven tool execution and personas.
+**Backend:**
+- Cloudflare Workers (V8 isolates)
+- Llama 3.3 70B via Workers AI
+- Durable Objects (SkillRegistry, SessionState)
+
+**Frontend:**
+- React 18 with TypeScript
+- Vite build tool
+- Tailwind CSS
+
+**Testing:**
+- Vitest (124 passing tests)
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for details.
+MIT License - see [LICENSE](LICENSE) for details.
