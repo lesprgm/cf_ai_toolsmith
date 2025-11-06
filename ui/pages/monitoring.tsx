@@ -4,10 +4,8 @@ import ConsoleLog from '../components/ConsoleLog';
 import { useSession } from '../context/SessionContext';
 import type { SandboxScenario, ScenarioRunResult } from '../types/workflow';
 
-type AppView = 'workflow' | 'editor' | 'monitoring' | 'chat' | 'insights';
-
 const API_BASE =
-  (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
+  ((import.meta as any).env?.VITE_WORKER_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
 
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -327,10 +325,10 @@ export default function MonitoringPage(): JSX.Element {
         <div
           role="status"
           className={`border rounded-lg px-4 py-3 text-sm flex items-start justify-between ${statusMessage.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-800'
-              : statusMessage.type === 'error'
-                ? 'bg-red-50 border-red-200 text-red-800'
-                : 'bg-slate-100 border-slate-200 text-slate-700'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : statusMessage.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-slate-100 border-slate-200 text-slate-700'
             }`}
         >
           <span className="pr-4">{statusMessage.text}</span>

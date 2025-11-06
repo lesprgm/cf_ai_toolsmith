@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ConsoleLog from '../components/ConsoleLog';
+import { useSession } from '../context/SessionContext';
+import { Bot, CheckCircle2, XCircle, MessageCircle, Wrench, Send } from 'lucide-react';
 
 interface Message {
     role: 'user' | 'assistant' | 'system';
@@ -6,6 +9,12 @@ interface Message {
     toolExecutions?: Array<{
         tool: string;
         export?: string;
+        success: boolean;
+        result?: any;
+        error?: string;
+    }>;
+    skillExecutions?: Array<{
+        skill: string;
         success: boolean;
         result?: any;
         error?: string;
@@ -25,6 +34,8 @@ interface Tool {
 
 declare const window: any;
 
+const API_BASE = ((import.meta as any).env?.VITE_WORKER_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
+
 function showAlert(msg: string) {
     if (typeof window !== 'undefined' && window.alert) {
         window.alert(msg);
@@ -34,11 +45,11 @@ function showAlert(msg: string) {
 }
 
 export default function ChatPage() {
+    const { sessionId } = useSession();
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
     const [tools, setTools] = useState<Tool[]>([]);
-    const [autoExecute, setAutoExecute] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -55,7 +66,7 @@ export default function ChatPage() {
 
     const fetchTools = async () => {
         try {
-            const response = await fetch('http://localhost:8787/api/tools');
+            const response = await fetch(`${API_BASE}/api/tools`);
             const data = await response.json() as any;
             if (data.tools) {
                 setTools(data.tools);
@@ -77,29 +88,140 @@ export default function ChatPage() {
         setInputValue('');
         setLoading(true);
 
+        const assistantMessage: Message = {
+            role: 'assistant',
+            content: '',
+            toolExecutions: undefined,
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+        const messageIndex = messages.length + 1;
+
         try {
-            const response = await fetch('http://localhost:8787/api/chat', {
+            const response = await fetch(`${API_BASE}/api/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-Session-ID': sessionId,
+                    'X-User-ID': sessionId,
                 },
                 body: JSON.stringify({
                     message: inputValue,
-                    autoExecuteTools: autoExecute,
+                    stream: true,
                 }),
             });
 
-            const data = await response.json() as any;
+            const contentType = response.headers.get('content-type');
 
-            const assistantMessage: Message = {
-                role: 'assistant',
-                content: data.response || 'No response',
-                toolExecutions: data.toolExecutions,
-            };
+            if (contentType?.includes('text/event-stream')) {
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
 
-            setMessages((prev) => [...prev, assistantMessage]);
+                if (!reader) {
+                    throw new Error('No response body');
+                }
+
+                let buffer = '';
+                let fullContent = '';
+                let toolExecutions: any[] | undefined;
+                let skillExecutions: any[] = [];
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') {
+                                continue;
+                            }
+
+                            try {
+                                const parsed = JSON.parse(data);
+
+                                if (parsed.type === 'content') {
+                                    fullContent += parsed.data;
+                                    setMessages((prev) => {
+                                        const updated = [...prev];
+                                        updated[messageIndex] = {
+                                            ...updated[messageIndex],
+                                            content: fullContent,
+                                        };
+                                        return updated;
+                                    });
+                                } else if (parsed.type === 'executing_skills') {
+                                    // AI is about to execute skills
+                                    fullContent += `\n\n🔄 Executing ${parsed.data.count} skill(s)...\n`;
+                                    setMessages((prev) => {
+                                        const updated = [...prev];
+                                        updated[messageIndex] = {
+                                            ...updated[messageIndex],
+                                            content: fullContent,
+                                        };
+                                        return updated;
+                                    });
+                                } else if (parsed.type === 'skill_result') {
+                                    // Individual skill execution result
+                                    skillExecutions.push(parsed.data);
+                                    setMessages((prev) => {
+                                        const updated = [...prev];
+                                        updated[messageIndex] = {
+                                            ...updated[messageIndex],
+                                            skillExecutions: [...skillExecutions],
+                                        };
+                                        return updated;
+                                    });
+                                } else if (parsed.type === 'tool_executions') {
+                                    toolExecutions = parsed.data;
+                                    setMessages((prev) => {
+                                        const updated = [...prev];
+                                        updated[messageIndex] = {
+                                            ...updated[messageIndex],
+                                            toolExecutions: toolExecutions,
+                                        };
+                                        return updated;
+                                    });
+                                } else if (parsed.type === 'skill_executions') {
+                                    skillExecutions = parsed.data;
+                                    setMessages((prev) => {
+                                        const updated = [...prev];
+                                        updated[messageIndex] = {
+                                            ...updated[messageIndex],
+                                            skillExecutions: skillExecutions,
+                                        };
+                                        return updated;
+                                    });
+                                } else if (parsed.type === 'error') {
+                                    showAlert('Error: ' + parsed.data.message);
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse SSE data:', e);
+                            }
+                        }
+                    }
+                }
+            } else {
+                const data = await response.json() as any;
+
+                setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[messageIndex] = {
+                        role: 'assistant',
+                        content: data.response || 'No response',
+                        toolExecutions: data.toolExecutions,
+                        skillExecutions: data.skillExecutions,
+                    };
+                    return updated;
+                });
+            }
         } catch (error) {
             showAlert('Failed to send message: ' + (error as Error).message);
+            setMessages((prev) => prev.filter((_, idx) => idx !== messageIndex));
         } finally {
             setLoading(false);
         }
@@ -117,21 +239,21 @@ export default function ChatPage() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="min-h-screen bg-slate-50">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {/* Header */}
-                <div className="mb-8">
-                    <h1 className="text-4xl font-extrabold text-slate-900 mb-3">
-                        AI Chat <span className="text-orange-600">with Tools</span>
+                <div className="mb-6">
+                    <h1 className="text-3xl font-bold text-slate-900 mb-2">
+                        AI Chat
                     </h1>
-                    <p className="text-slate-600 text-lg">
-                        Chat with an AI assistant that can use your installed API connectors
+                    <p className="text-slate-600">
+                        Chat with AI that can execute your registered API skills
                     </p>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                    {/* Sidebar - Installed Tools */}
-                    <div className="lg:col-span-1">
+                    {/* Sidebar - Installed Tools & Console */}
+                    <div className="lg:col-span-1 space-y-6">
                         <div className="bg-white rounded-xl border-2 border-slate-200 shadow-sm p-6 sticky top-6">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-bold text-slate-900">Installed Tools</h2>
@@ -176,20 +298,13 @@ export default function ChatPage() {
                                 </div>
                             )}
 
-                            <div className="mt-6 pt-4 border-t border-slate-200">
-                                <label className="flex items-center space-x-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={autoExecute}
-                                        onChange={(e) => setAutoExecute(e.target.checked)}
-                                        className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
-                                    />
-                                    <span className="text-sm text-slate-700">Auto-execute tools</span>
-                                </label>
-                                <p className="text-xs text-slate-500 mt-2">
-                                    When enabled, AI will automatically call appropriate tools based on your message
-                                </p>
-                            </div>
+
+                        </div>
+
+                        {/* Console Logs */}
+                        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-sm p-4">
+                            <h2 className="text-lg font-bold text-slate-900 mb-4">Console</h2>
+                            <ConsoleLog sessionId={sessionId} />
                         </div>
                     </div>
 
@@ -200,23 +315,32 @@ export default function ChatPage() {
                             <div className="flex-1 overflow-y-auto p-6 space-y-4">
                                 {messages.length === 0 && (
                                     <div className="text-center py-12">
-                                        <div className="text-6xl mb-4">💬</div>
+                                        <MessageCircle className="w-16 h-16 mx-auto mb-4 text-slate-400" />
                                         <h3 className="text-xl font-bold text-slate-900 mb-2">
                                             Start a conversation
                                         </h3>
                                         <p className="text-slate-600 max-w-md mx-auto">
-                                            Ask the AI to use your installed tools, or get help with the workflow
+                                            Describe your integration needs and I'll design a complete workflow solution
                                         </p>
-                                        {tools.length > 0 && (
-                                            <div className="mt-6 space-y-2">
-                                                <p className="text-sm font-semibold text-slate-700">Try asking:</p>
-                                                <div className="space-y-1 text-sm text-slate-600">
-                                                    <div>"Test the {tools[0].name} connector"</div>
-                                                    <div>"Show me what {tools[0].name} can do"</div>
-                                                    <div>"Call {tools[0].exports[0]} with my data"</div>
+                                        <div className="mt-6 space-y-2">
+                                            <p className="text-sm font-semibold text-slate-700">Try these examples:</p>
+                                            <div className="space-y-2 text-sm text-slate-600 max-w-lg mx-auto">
+                                                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 text-left">
+                                                    <div className="font-semibold text-blue-700 mb-1">With Registered Skills:</div>
+                                                    "List all posts" (JSONPlaceholder)
+                                                    <br />"Get post #5" (JSONPlaceholder)
+                                                    <br />"Show repos for cloudflare" (GitHub)
+                                                </div>
+                                                <div className="p-3 bg-orange-50 rounded-lg border border-orange-200 text-left">
+                                                    <div className="font-semibold text-orange-700 mb-1">Workflow Design:</div>
+                                                    "Sync Stripe customers to Airtable"
+                                                    <br />"Process payment and send email"
                                                 </div>
                                             </div>
-                                        )}
+                                            <div className="mt-4 text-xs text-slate-500 flex items-center justify-center gap-1">
+                                                <Bot className="w-3 h-3" /> Register API skills on the <strong>Skills</strong> page to enable execution
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
 
@@ -236,7 +360,36 @@ export default function ChatPage() {
                                             </div>
                                             <div className="whitespace-pre-wrap">{msg.content}</div>
 
-                                            {/* Tool Execution Results */}
+                                            {/* Skill Execution Results */}
+                                            {msg.skillExecutions && msg.skillExecutions.length > 0 && (
+                                                <div className="mt-3 space-y-2">
+                                                    <div className="text-xs font-semibold text-blue-600 mb-2 flex items-center gap-1">
+                                                        <Bot className="w-4 h-4" /> AI executed {msg.skillExecutions.length} skill{msg.skillExecutions.length !== 1 ? 's' : ''}:
+                                                    </div>
+                                                    {msg.skillExecutions.map((exec, execIdx) => (
+                                                        <div
+                                                            key={execIdx}
+                                                            className={`text-xs p-3 rounded border-2 ${exec.success
+                                                                ? 'bg-blue-50 border-blue-200 text-blue-900'
+                                                                : 'bg-red-50 border-red-200 text-red-900'
+                                                                }`}
+                                                        >
+                                                            <div className="font-bold mb-1 flex items-center gap-1">
+                                                                {exec.success ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-600" />} {exec.skill}
+                                                            </div>
+                                                            {exec.success ? (
+                                                                <div className="font-mono text-xs overflow-x-auto max-h-48">
+                                                                    <pre>{JSON.stringify(exec.result, null, 2)}</pre>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="text-red-700">Error: {exec.error}</div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {/* Tool Execution Results (legacy) */}
                                             {msg.toolExecutions && msg.toolExecutions.length > 0 && (
                                                 <div className="mt-3 space-y-2">
                                                     {msg.toolExecutions.map((exec, execIdx) => (
@@ -247,8 +400,8 @@ export default function ChatPage() {
                                                                 : 'bg-red-50 border-red-200 text-red-900'
                                                                 }`}
                                                         >
-                                                            <div className="font-bold mb-1">
-                                                                🔧 {exec.tool}
+                                                            <div className="font-bold mb-1 flex items-center gap-1">
+                                                                <Wrench className="w-4 h-4" /> {exec.tool}
                                                                 {exec.export && `.${exec.export}`}
                                                             </div>
                                                             {exec.success ? (
@@ -297,9 +450,13 @@ export default function ChatPage() {
                                         <button
                                             onClick={sendMessage}
                                             disabled={loading || !inputValue.trim()}
-                                            className="px-6 py-3 bg-orange-600 text-white font-semibold rounded-lg hover:bg-orange-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow-md"
+                                            className="px-6 py-3 bg-orange-600 text-white font-semibold rounded-lg hover:bg-orange-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors shadow-sm hover:shadow-md flex items-center gap-2"
                                         >
-                                            {loading ? '...' : 'Send'}
+                                            {loading ? '...' : (
+                                                <>
+                                                    <Send className="w-4 h-4" /> Send
+                                                </>
+                                            )}
                                         </button>
                                         {messages.length > 0 && (
                                             <button
