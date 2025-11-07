@@ -21,7 +21,12 @@ class_name = "SkillRegistry"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["SessionState", "SkillRegistry"]
+new_sqlite_classes = ["SessionState", "ToolRegistry"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["ToolRegistry"]
+new_sqlite_classes = ["SkillRegistry"]
 
 # Optional D1 database (uncomment if needed)
 # [[d1_databases]]
