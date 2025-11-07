@@ -346,6 +346,18 @@ npm run test:coverage     # Coverage report
 
 - Vitest (124 passing tests)
 
+## Future Improvements
+
+ToolSmith will continue to grow from a chat-based skill execution environment into a complete agent automation platform. Planned improvements include:
+
+- **Workflow Automation:** Support natural language instructions such as "send the weather report to Slack every morning" that automatically generate and deploy scheduled Workers chaining multiple skills together.
+- **One-Click Cloudflare Deployment:** Allow users to export tested agents as standalone Cloudflare Workers with cron triggers, secrets, and webhooks preconfigured for reuse across projects or integrations.
+- **Multi-Step Agent Composition:** Enable users to chain APIs, for example "fetch data, filter results, then post to Slack," within a single deployable flow.
+- **Integration Hub:** Add built-in connectors for Slack, Zapier, Notion, and Google Sheets to extend agents beyond ToolSmith.
+- **Monitoring and Insights:** Provide dashboards for execution logs, latency tracking, and success metrics to help users observe and optimize deployed agents.
+
+These enhancements will move ToolSmith toward becoming a full chat-to-deployment automation system built on Cloudflare’s edge network.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
