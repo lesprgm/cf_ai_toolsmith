@@ -6,6 +6,14 @@
 
 Give AI agents instant access to any API. Upload an OpenAPI specification, and chat with an AI that can autonomously execute your APIs in real-time.
 
+## 🌐 Live Demo
+
+**Try it now (no setup required):**
+
+- **Frontend:** https://main.toolsmith-ui.pages.dev
+
+Sample APIs are pre-loaded. Just open the link and start chatting!
+
 ## Overview
 
 ToolSmith is an AI agent platform built on Cloudflare Workers that transforms OpenAPI specifications into executable AI skills. Upload an API spec, and an AI assistant gains the ability to call those APIs during conversations—executing real HTTP requests and returning results without writing code.
@@ -16,16 +24,16 @@ ToolSmith is an AI agent platform built on Cloudflare Workers that transforms Op
 graph TB
     A[Upload OpenAPI Spec] --> B[Parse Operations]
     B --> C[SkillRegistry DO<br/>stores per-user skills]
-    
+
     D[User Chats] --> E[Load User Skills]
     E --> F[AI + Function Calling]
     F -->|Chooses Skills| G[Execute HTTP Request]
     G --> H[Stream Results]
     H --> I[AI Interprets & Responds]
-    
+
     J[SessionState DO<br/>chat history] -.->|Context| D
     K[X-User-ID Header] -.->|Isolates| C
-    
+
   style C fill:#ffd166,stroke:#333,stroke-width:2px,color:#000
   style J fill:#7dd3fc,stroke:#333,stroke-width:2px,color:#000
 ```
@@ -43,6 +51,9 @@ npm run dev:ui   # Start UI on http://localhost:5173
 
 ![AI executing weather skill](screenshots/screenshot1.png)
 _AI autonomously calling a weather API skill during conversation_
+
+![AI executing flight tracking skill](screenshots/screenshot2.png)
+_AI autonomously calling a flight tracking API skill during conversation_
 
 ## How to Run Everything
 
@@ -192,12 +203,14 @@ AI executes:
 ### Example Interactions
 
 **Single API:**
+
 ```
 User: "What's the weather in Paris?"
 AI: Executes getCurrentWeather(location="Paris")
 ```
 
 **Multi-API:**
+
 ```
 User: "List my GitHub starred repos about 'ai' and save to Airtable"
 AI: Executes listStarredRepos() → filters → createRecords()
@@ -208,12 +221,14 @@ AI: Executes listStarredRepos() → filters → createRecords()
 ### Durable Objects Storage
 
 **SkillRegistry** (`workers/durable_objects/SkillRegistry.ts`)
+
 - Stores per-user registered APIs and their skills
 - Key structure: `user:{userId}` → UserSkills object
 - Contains: API name, base URL, encrypted API key, skill definitions
 - Multi-tenant isolation via `X-User-ID` header
 
 **SessionState** (`workers/durable_objects/SessionState.ts`)
+
 - Maintains chat conversation history per session
 - Key structure: `history` → Message[] array
 - Enables context-aware conversations across page refreshes
@@ -316,16 +331,19 @@ npm run test:coverage     # Coverage report
 ## Technical Stack
 
 **Backend:**
+
 - Cloudflare Workers (V8 isolates)
 - Llama 3.3 70B via Workers AI
 - Durable Objects (SkillRegistry, SessionState)
 
 **Frontend:**
+
 - React 18 with TypeScript
 - Vite build tool
 - Tailwind CSS
 
 **Testing:**
+
 - Vitest (124 passing tests)
 
 ## License

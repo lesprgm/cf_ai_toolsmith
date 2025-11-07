@@ -19,9 +19,11 @@ workers/dist/
 # Environment files
 .env
 .env.local
-.env.production
 .env.development
 .dev.vars
+
+# Note: ui/.env.production is NOT ignored because it only contains
+# the public Worker URL and is needed for the build process
 
 # Editor directories and files
 .vscode/*

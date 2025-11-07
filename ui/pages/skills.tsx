@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSession } from '../context/SessionContext';
 import { Bot, CheckCircle2, FileText, Upload, RefreshCw, Loader2, Trash2, Plus, X, Folder, FileCode } from 'lucide-react';
+import { parse as parseYaml } from 'yaml';
 
 interface RegisteredAPI {
     apiName: string;
@@ -71,6 +72,29 @@ export default function SkillsPage() {
             reader.onload = (event) => {
                 const content = event.target?.result as string;
                 setSpecInput(content);
+
+                // Try to extract API name from the file content
+                try {
+                    let parsed;
+                    const isYaml = file.name.endsWith('.yaml') || file.name.endsWith('.yml');
+
+                    if (isYaml) {
+                        parsed = parseYaml(content);
+                    } else {
+                        try {
+                            parsed = JSON.parse(content);
+                        } catch {
+                            // Maybe it's YAML without .yaml extension
+                            parsed = parseYaml(content);
+                        }
+                    }
+
+                    if (parsed?.info?.title && !apiName) {
+                        setApiName(parsed.info.title);
+                    }
+                } catch (err) {
+                    console.log('Could not auto-extract API name:', err);
+                }
             };
             reader.readAsText(file);
         }
@@ -83,18 +107,39 @@ export default function SkillsPage() {
         }
 
         if (!specInput.trim()) {
-            showAlert('Please provide an OpenAPI spec (paste JSON or upload file)');
+            showAlert('Please provide an OpenAPI spec (paste JSON/YAML or upload file)');
             return;
         }
 
         setRegistering(true);
         try {
-            // Parse spec JSON
+            // Parse spec - handle both JSON and YAML
             let spec;
             try {
                 spec = JSON.parse(specInput);
-            } catch (e) {
-                showAlert('Invalid JSON in OpenAPI spec');
+            } catch (jsonError) {
+                // Try YAML parsing
+                try {
+                    spec = parseYaml(specInput);
+                    if (!spec) {
+                        throw new Error('YAML parsing returned null');
+                    }
+                } catch (yamlError) {
+                    showAlert('Invalid JSON or YAML in OpenAPI spec. Please check your file format.');
+                    return;
+                }
+            }
+
+            // Validate it's an OpenAPI spec
+            if (!spec.openapi && !spec.swagger) {
+                showAlert('Not a valid OpenAPI/Swagger specification. Missing "openapi" or "swagger" field.');
+                return;
+            }
+
+            // Check spec size (rough estimate: 5MB limit)
+            const specSize = JSON.stringify(spec).length;
+            if (specSize > 5 * 1024 * 1024) {
+                showAlert(`Spec is too large (${(specSize / 1024 / 1024).toFixed(2)}MB). Maximum is 5MB.`);
                 return;
             }
 
@@ -213,37 +258,36 @@ export default function SkillsPage() {
                 };
                 break;
 
-            case 'restcountries':
-                name = 'REST Countries';
+            case 'coindesk':
+                name = 'CoinDesk Bitcoin Price';
                 exampleSpec = {
                     openapi: "3.0.0",
                     info: {
-                        title: "REST Countries API",
-                        version: "3.1.0",
-                        description: "Get information about countries"
+                        title: "CoinDesk Bitcoin Price Index API",
+                        version: "1.0.0",
+                        description: "Real-time Bitcoin price data in multiple currencies"
                     },
-                    servers: [{ url: "https://restcountries.com/v3.1" }],
+                    servers: [{ url: "https://api.coindesk.com/v1" }],
                     paths: {
-                        "/all": {
+                        "/bpi/currentprice.json": {
                             get: {
-                                operationId: "getAllCountries",
-                                summary: "Get all countries",
+                                operationId: "getCurrentBitcoinPrice",
+                                summary: "Get current Bitcoin price index",
+                                description: "Returns current BTC price in USD, GBP, and EUR",
                                 responses: { "200": { description: "Success" } }
                             }
                         },
-                        "/name/{name}": {
+                        "/bpi/currentprice/{currency}.json": {
                             get: {
-                                operationId: "getCountryByName",
-                                summary: "Get country by name",
-                                parameters: [{ name: "name", in: "path", required: true, schema: { type: "string" } }],
-                                responses: { "200": { description: "Success" } }
-                            }
-                        },
-                        "/alpha/{code}": {
-                            get: {
-                                operationId: "getCountryByCode",
-                                summary: "Get country by code",
-                                parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+                                operationId: "getBitcoinPriceByCurrency",
+                                summary: "Get Bitcoin price in specific currency",
+                                parameters: [{
+                                    name: "currency",
+                                    in: "path",
+                                    required: true,
+                                    schema: { type: "string" },
+                                    description: "Currency code (e.g., USD, GBP, EUR)"
+                                }],
                                 responses: { "200": { description: "Success" } }
                             }
                         }
@@ -312,25 +356,47 @@ export default function SkillsPage() {
                 };
                 break;
 
-            case 'randomuser':
-                name = 'Random User Generator';
+            case 'opensky':
+                name = 'OpenSky Network';
                 exampleSpec = {
                     openapi: "3.0.0",
                     info: {
-                        title: "Random User Generator API",
+                        title: "OpenSky Network API",
                         version: "1.0.0",
-                        description: "Generate random user data"
+                        description: "Real-time air traffic data - track flights worldwide"
                     },
-                    servers: [{ url: "https://randomuser.me/api" }],
+                    servers: [{ url: "https://opensky-network.org" }],
                     paths: {
-                        "/": {
+                        "/api/states/all": {
                             get: {
-                                operationId: "getRandomUsers",
-                                summary: "Get random users",
+                                operationId: "getAllStates",
+                                summary: "Get all current flight states",
+                                description: "Retrieve state vectors for all aircraft currently tracked",
                                 parameters: [
-                                    { name: "results", in: "query", schema: { type: "integer", default: 1 } },
-                                    { name: "gender", in: "query", schema: { type: "string", enum: ["male", "female"] } },
-                                    { name: "nat", in: "query", schema: { type: "string" } }
+                                    {
+                                        name: "lamin",
+                                        in: "query",
+                                        schema: { type: "number" },
+                                        description: "Lower bound for latitude in decimal degrees"
+                                    },
+                                    {
+                                        name: "lomin",
+                                        in: "query",
+                                        schema: { type: "number" },
+                                        description: "Lower bound for longitude in decimal degrees"
+                                    },
+                                    {
+                                        name: "lamax",
+                                        in: "query",
+                                        schema: { type: "number" },
+                                        description: "Upper bound for latitude in decimal degrees"
+                                    },
+                                    {
+                                        name: "lomax",
+                                        in: "query",
+                                        schema: { type: "number" },
+                                        description: "Upper bound for longitude in decimal degrees"
+                                    }
                                 ],
                                 responses: { "200": { description: "Success" } }
                             }
@@ -402,11 +468,11 @@ export default function SkillsPage() {
                             </button>
 
                             <button
-                                onClick={() => loadExampleSpec('restcountries')}
+                                onClick={() => loadExampleSpec('coindesk')}
                                 className="text-left p-4 bg-white rounded-lg border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all group"
                             >
-                                <div className="font-semibold text-slate-900 mb-1">REST Countries</div>
-                                <div className="text-xs text-slate-600">Get information about any country in the world</div>
+                                <div className="font-semibold text-slate-900 mb-1">CoinDesk Bitcoin Price</div>
+                                <div className="text-xs text-slate-600">Real-time Bitcoin price in multiple currencies</div>
                                 <div className="text-xs text-blue-600 mt-2 group-hover:underline">Try it →</div>
                             </button>
 
@@ -429,11 +495,11 @@ export default function SkillsPage() {
                             </button>
 
                             <button
-                                onClick={() => loadExampleSpec('randomuser')}
+                                onClick={() => loadExampleSpec('opensky')}
                                 className="text-left p-4 bg-white rounded-lg border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all group"
                             >
-                                <div className="font-semibold text-slate-900 mb-1">Random User Generator</div>
-                                <div className="text-xs text-slate-600">Generate realistic fake user data for testing</div>
+                                <div className="font-semibold text-slate-900 mb-1">OpenSky Network</div>
+                                <div className="text-xs text-slate-600">Real-time flight tracking - aircraft positions worldwide</div>
                                 <div className="text-xs text-blue-600 mt-2 group-hover:underline">Try it →</div>
                             </button>
                         </div>
@@ -498,7 +564,7 @@ export default function SkillsPage() {
                             {/* OpenAPI Spec */}
                             <div>
                                 <label className="block text-sm font-semibold text-slate-700 mb-2">
-                                    OpenAPI Specification *
+                                    OpenAPI Specification (JSON or YAML) *
                                 </label>
                                 <div className="flex gap-2 mb-2">
                                     <button
@@ -520,7 +586,7 @@ export default function SkillsPage() {
                                     accept=".json,.yaml,.yml"
                                     onChange={handleFileUpload}
                                     className="hidden"
-                                    aria-label="Upload OpenAPI spec file"
+                                    aria-label="Upload OpenAPI spec file (JSON or YAML)"
                                 />
                                 {specFile && (
                                     <p className="text-sm text-green-600 mb-2 flex items-center gap-2">
@@ -530,7 +596,7 @@ export default function SkillsPage() {
                                 <textarea
                                     value={specInput}
                                     onChange={(e) => setSpecInput(e.target.value)}
-                                    placeholder='Paste OpenAPI JSON here or upload a file...'
+                                    placeholder='Paste OpenAPI JSON or YAML here, or upload a file...'
                                     className="w-full h-64 px-4 py-2 border-2 border-slate-300 rounded-lg focus:border-orange-500 focus:outline-none font-mono text-sm"
                                 />
                             </div>

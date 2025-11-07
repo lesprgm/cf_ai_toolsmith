@@ -3,12 +3,13 @@ import { getGlobalLogger } from './utils/log';
 import { SessionState as SessionStateImpl } from './durable_objects/SessionState';
 import { SkillRegistry as SkillRegistryImpl } from './durable_objects/SkillRegistry';
 import { parseOpenAPIToSkills, skillsToAIToolSchemas, executeSkill } from './skill-parser';
+import { parseYaml } from './utils/yaml';
 
 export class SessionState extends SessionStateImpl { }
 export class SkillRegistry extends SkillRegistryImpl { }
 
 const MAX_HISTORY_CHARS = 50_000;
-const MAX_MODEL_TOKENS = 120_000;
+const MAX_MODEL_TOKENS = 24_000;
 const CHARS_PER_TOKEN = 4;
 const STREAM_FLUSH_INTERVAL_MS = 250;
 
@@ -37,10 +38,35 @@ export default {
         try {
             if (url.pathname === '/api/skills/register' && request.method === 'POST') {
                 const body = await request.json<any>();
-                const { apiName, spec, apiKey } = body;
+                let { apiName, spec, apiKey } = body;
 
                 if (!apiName || !spec) {
                     return jsonResponse({ error: 'apiName and spec are required' }, 400, corsHeaders);
+                }
+
+                // If spec is a string, try to parse it (could be JSON or YAML)
+                if (typeof spec === 'string') {
+                    try {
+                        spec = JSON.parse(spec);
+                    } catch {
+                        // Try YAML
+                        spec = parseYaml(spec);
+                        if (!spec) {
+                            return jsonResponse({ error: 'Invalid JSON or YAML in spec' }, 400, corsHeaders);
+                        }
+                    }
+                }
+
+                // Validate OpenAPI spec
+                if (!spec.openapi && !spec.swagger) {
+                    return jsonResponse({ error: 'Not a valid OpenAPI/Swagger specification' }, 400, corsHeaders);
+                }
+
+                const specSize = JSON.stringify(spec).length;
+                if (specSize > 5 * 1024 * 1024) {
+                    return jsonResponse({
+                        error: `Spec is too large (${(specSize / 1024 / 1024).toFixed(2)}MB). Maximum is 5MB.`
+                    }, 400, corsHeaders);
                 }
 
                 try {
@@ -137,7 +163,17 @@ export default {
                 });
 
                 const historyResp = await sessionStub.fetch('http://internal/get-history');
-                const history = (await historyResp.json<any>()) as any[];
+                let history = (await historyResp.json<any>()) as any[];
+
+                // EMERGENCY PRE-CHECK: If history is absurdly large, clear it immediately
+                const preCheckTokens = estimateMessageTokens(history);
+                if (preCheckTokens > 50_000) {
+                    console.log(`[EMERGENCY] History has ${preCheckTokens} tokens, clearing all except system messages!`);
+                    history = history.filter(msg => msg.role === 'system');
+                    // Save the cleared history
+                    await sessionStub.fetch('http://internal/clear-history', { method: 'POST' });
+                }
+
                 const trimmedHistory = trimChatHistory(history);
 
                 const userId = request.headers.get('X-User-ID') || 'default';
@@ -223,6 +259,8 @@ export default {
                     '- General knowledge questions you can answer directly',
                     '- Asking about your capabilities or how things work',
                     '- The user is just chatting or making small talk',
+                    '',
+                    '**CRITICAL: When you need to call a skill, use the proper tool_call format. NEVER respond with instructions like "Your function call should be..." - always make the actual tool call.**',
                     '',
                     personaInstruction,
                     skillsDescription,
@@ -688,28 +726,55 @@ function trimChatHistory(history: Array<{ role: string; content: string }>): Arr
         return [];
     }
 
-    const totalChars = history.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
-    if (totalChars <= MAX_HISTORY_CHARS) {
-        return history;
+    // Estimate current token usage
+    const estimatedTokens = estimateMessageTokens(history);
+    // CORRECTED: llama-3.3-70b-instruct-fp8-fast has 24k context window
+    // Be VERY aggressive - leave plenty of room for tools, system prompt, and response
+    const TOKEN_WARNING_THRESHOLD = 8_000;  // Start trimming early (was 16k)
+    const TOKEN_EMERGENCY_THRESHOLD = 12_000; // Emergency trim (was 20k)
+    const MAX_MESSAGES_NORMAL = 8;          // Much lower (was 15)
+    const KEEP_MESSAGES_NORMAL = 5;         // Keep fewer (was 10)
+    const KEEP_MESSAGES_HIGH_TOKENS = 3;    // Keep very few (was 5)
+    const KEEP_MESSAGES_EMERGENCY = 2;      // Absolute minimum (was 3)
+
+    // Separate system messages from conversation
+    const systemMessages = history.filter(msg => msg.role === 'system');
+    const conversationMessages = history.filter(msg => msg.role !== 'system');
+
+    let trimmedConversation = conversationMessages;
+
+    // Emergency trim if way over limit
+    if (estimatedTokens > TOKEN_EMERGENCY_THRESHOLD) {
+        console.log(`[History] EMERGENCY TRIM: ${estimatedTokens} tokens > ${TOKEN_EMERGENCY_THRESHOLD}, keeping only last ${KEEP_MESSAGES_EMERGENCY} messages`);
+        trimmedConversation = conversationMessages.slice(-KEEP_MESSAGES_EMERGENCY);
+    }
+    // Apply sliding window based on message count
+    else if (conversationMessages.length > MAX_MESSAGES_NORMAL) {
+        // Keep last N messages
+        const keepCount = estimatedTokens > TOKEN_WARNING_THRESHOLD
+            ? KEEP_MESSAGES_HIGH_TOKENS
+            : KEEP_MESSAGES_NORMAL;
+
+        trimmedConversation = conversationMessages.slice(-keepCount);
+
+        console.log(`[History] Trimming conversation: ${conversationMessages.length} messages -> ${trimmedConversation.length} messages (tokens: ${estimatedTokens})`);
+    }
+    // Even if message count is ok, check token usage
+    else if (estimatedTokens > TOKEN_WARNING_THRESHOLD) {
+        // Aggressively trim when approaching token limit
+        const keepCount = KEEP_MESSAGES_HIGH_TOKENS;
+        trimmedConversation = conversationMessages.slice(-keepCount);
+
+        console.log(`[History] Token threshold exceeded: trimming ${conversationMessages.length} messages -> ${trimmedConversation.length} messages (tokens: ${estimatedTokens})`);
     }
 
-    const charsToRemove = totalChars - MAX_HISTORY_CHARS;
-    let removedChars = 0;
-    const trimmed: Array<{ role: string; content: string }> = [];
-
-    for (let i = 0; i < history.length; i++) {
-        const msg = history[i];
-        if (removedChars >= charsToRemove) {
-            trimmed.push(msg);
-        } else {
-            removedChars += msg.content?.length || 0;
-        }
-    }
-
-    return trimmed;
+    // Always preserve system messages at the beginning
+    return [...systemMessages, ...trimmedConversation];
 }
 
 function estimateMessageTokens(messages: Array<{ role: string; content: string }>): number {
     const totalChars = messages.reduce((sum, msg) => sum + (msg.content?.length || 0), 0);
-    return Math.ceil(totalChars / CHARS_PER_TOKEN);
+    // Use more conservative estimate: 3 chars per token instead of 4
+    // This accounts for the fact that JSON, technical terms, etc. use more tokens
+    return Math.ceil(totalChars / 3);
 }

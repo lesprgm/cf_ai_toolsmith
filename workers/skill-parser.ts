@@ -149,7 +149,15 @@ export async function executeSkill(
     apiKey?: string
 ): Promise<{ success: boolean; result?: any; error?: string }> {
     try {
-        let url = skill.baseUrl + skill.path;
+        // Construct URL - handle case where baseUrl might already contain the path
+        let url: string;
+        if (skill.baseUrl.endsWith(skill.path)) {
+            // baseUrl already contains the path (misconfigured spec) - use as-is
+            url = skill.baseUrl;
+        } else {
+            url = skill.baseUrl + skill.path;
+        }
+
         for (const param of skill.parameters) {
             if (param.in === 'path' && parameters[param.name]) {
                 url = url.replace(`{${param.name}}`, encodeURIComponent(String(parameters[param.name])));

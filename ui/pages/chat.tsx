@@ -44,16 +44,29 @@ function showAlert(msg: string) {
     }
 }
 
+interface RegisteredSkill {
+    apiName: string;
+    skillCount: number;
+    skillNames: string[];
+    metadata?: {
+        title?: string;
+        description?: string;
+    };
+}
+
 export default function ChatPage() {
     const { sessionId } = useSession();
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loading, setLoading] = useState(false);
     const [tools, setTools] = useState<Tool[]>([]);
+    const [skills, setSkills] = useState<RegisteredSkill[]>([]);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         fetchTools();
+        fetchSkills();
     }, []);
 
     useEffect(() => {
@@ -74,6 +87,66 @@ export default function ChatPage() {
         } catch (error) {
             console.error('Failed to fetch tools:', error);
         }
+    };
+
+    const fetchSkills = async () => {
+        try {
+            const response = await fetch(`${API_BASE}/api/skills/list`, {
+                headers: {
+                    'X-User-ID': sessionId
+                }
+            });
+            const data = await response.json() as any;
+            if (data.apis && Array.isArray(data.apis)) {
+                setSkills(data.apis);
+                generateSuggestions(data.apis);
+            }
+        } catch (error) {
+            console.error('Failed to fetch skills:', error);
+        }
+    };
+
+    const generateSuggestions = (apis: RegisteredSkill[]) => {
+        if (!apis || apis.length === 0) {
+            setSuggestions([]);
+            return;
+        }
+
+        const allSuggestions: string[] = [];
+
+        for (const api of apis) {
+            const apiName = api.metadata?.title || api.apiName;
+
+            // Generate contextual suggestions based on common API patterns
+            if (api.apiName.toLowerCase().includes('weather')) {
+                allSuggestions.push(`Get current weather in New York`);
+                allSuggestions.push(`Show weather forecast for London`);
+            } else if (api.apiName.toLowerCase().includes('github')) {
+                allSuggestions.push(`List repositories for ${apiName}`);
+                allSuggestions.push(`Show latest commits`);
+            } else if (api.apiName.toLowerCase().includes('placeholder')) {
+                allSuggestions.push(`List all posts`);
+                allSuggestions.push(`Get post #5`);
+                allSuggestions.push(`Show user #3's todos`);
+            } else if (api.apiName.toLowerCase().includes('pokemon') || api.apiName.toLowerCase().includes('pokeapi')) {
+                allSuggestions.push(`Get information about Pikachu`);
+                allSuggestions.push(`Show details for Charizard`);
+            } else if (api.apiName.toLowerCase().includes('opensky')) {
+                allSuggestions.push(`Show flights over San Francisco`);
+                allSuggestions.push(`Get aircraft near New York`);
+            } else if (api.apiName.toLowerCase().includes('coindesk') || api.apiName.toLowerCase().includes('bitcoin')) {
+                allSuggestions.push(`Get current Bitcoin price`);
+                allSuggestions.push(`Show BTC price in EUR`);
+            } else {
+                // Generic suggestions
+                allSuggestions.push(`List data from ${apiName}`);
+                allSuggestions.push(`Get information using ${apiName}`);
+            }
+        }
+
+        // Limit to 6 suggestions and shuffle
+        const shuffled = allSuggestions.sort(() => 0.5 - Math.random());
+        setSuggestions(shuffled.slice(0, 6));
     };
 
     const sendMessage = async () => {
@@ -320,27 +393,54 @@ export default function ChatPage() {
                                             Start a conversation
                                         </h3>
                                         <p className="text-slate-600 max-w-md mx-auto">
-                                            Describe your integration needs and I'll design a complete workflow solution
+                                            {skills.length > 0
+                                                ? 'Ask me to use your registered skills or describe integration needs'
+                                                : 'Describe your integration needs and I\'ll design a complete workflow solution'}
                                         </p>
-                                        <div className="mt-6 space-y-2">
-                                            <p className="text-sm font-semibold text-slate-700">Try these examples:</p>
-                                            <div className="space-y-2 text-sm text-slate-600 max-w-lg mx-auto">
-                                                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 text-left">
-                                                    <div className="font-semibold text-blue-700 mb-1">With Registered Skills:</div>
-                                                    "List all posts" (JSONPlaceholder)
-                                                    <br />"Get post #5" (JSONPlaceholder)
-                                                    <br />"Show repos for cloudflare" (GitHub)
-                                                </div>
-                                                <div className="p-3 bg-orange-50 rounded-lg border border-orange-200 text-left">
-                                                    <div className="font-semibold text-orange-700 mb-1">Workflow Design:</div>
-                                                    "Sync Stripe customers to Airtable"
-                                                    <br />"Process payment and send email"
+
+                                        {/* AI-Generated Suggestions for Registered Skills */}
+                                        {suggestions.length > 0 && (
+                                            <div className="mt-8 max-w-2xl mx-auto">
+                                                <p className="text-sm font-semibold text-slate-700 mb-3 flex items-center justify-center gap-2">
+                                                    <Bot className="w-4 h-4" /> Try these with your registered skills:
+                                                </p>
+                                                <div className="flex flex-wrap justify-center gap-2">
+                                                    {suggestions.map((suggestion, idx) => (
+                                                        <button
+                                                            key={idx}
+                                                            onClick={() => {
+                                                                setInputValue(suggestion);
+                                                                // Auto-focus the textarea
+                                                                setTimeout(() => {
+                                                                    const textarea = document.querySelector('textarea');
+                                                                    textarea?.focus();
+                                                                }, 100);
+                                                            }}
+                                                            className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-full text-sm font-medium hover:from-blue-600 hover:to-purple-600 transition-all shadow-md hover:shadow-lg transform hover:scale-105"
+                                                        >
+                                                            {suggestion}
+                                                        </button>
+                                                    ))}
                                                 </div>
                                             </div>
-                                            <div className="mt-4 text-xs text-slate-500 flex items-center justify-center gap-1">
-                                                <Bot className="w-3 h-3" /> Register API skills on the <strong>Skills</strong> page to enable execution
+                                        )}
+
+                                        {/* Fallback Examples when no skills */}
+                                        {skills.length === 0 && (
+                                            <div className="mt-6 space-y-2">
+                                                <p className="text-sm font-semibold text-slate-700">Example queries:</p>
+                                                <div className="space-y-2 text-sm text-slate-600 max-w-lg mx-auto">
+                                                    <div className="p-3 bg-orange-50 rounded-lg border border-orange-200 text-left">
+                                                        <div className="font-semibold text-orange-700 mb-1">Workflow Design:</div>
+                                                        "Sync Stripe customers to Airtable"
+                                                        <br />"Process payment and send email"
+                                                    </div>
+                                                </div>
+                                                <div className="mt-4 text-xs text-slate-500 flex items-center justify-center gap-1">
+                                                    <Bot className="w-3 h-3" /> Register API skills on the <strong>Skills</strong> page to enable execution
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
                                     </div>
                                 )}
 
