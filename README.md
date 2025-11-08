@@ -6,11 +6,11 @@
 
 Give AI agents instant access to any API. Upload an OpenAPI specification, and chat with an AI that can autonomously execute your APIs in real-time.
 
-## 🌐 Live Demo
+##  Live Demo
 
 **Try it now (no setup required):**
 
-- **Frontend:** https://main.toolsmith-ui.pages.dev
+- **Live Site:** https://main.toolsmith-ui.pages.dev
 
 Sample APIs are pre-loaded. Just open the link and start chatting!
 
