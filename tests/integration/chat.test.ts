@@ -54,6 +54,8 @@ const createSkillRegistryStub = (apis: Record<string, any> = {}) => ({
   })
 });
 
+const TEST_SECRET = 'test-secret-key-1234567890';
+
 describe('Integration - chat endpoint', () => {
   it('persists chat messages via SessionState durable object', async () => {
     const { namespace, storage } = createSessionStateNamespace();
@@ -63,7 +65,8 @@ describe('Integration - chat endpoint', () => {
         run: async () => ({ response: 'Hello from AI' })
       },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub()
+      SKILL_REGISTRY: createSkillRegistryStub(),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -94,13 +97,14 @@ describe('Integration - chat endpoint', () => {
     const env = {
       AI: { run: async () => ({ response: 'OK' }) },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub()
+      SKILL_REGISTRY: createSkillRegistryStub(),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-ID': 'test' },
-      body: JSON.stringify({}) // missing message
+      body: JSON.stringify({})
     });
 
     const response = await worker.fetch(request, env);
@@ -121,7 +125,8 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub()
+      SKILL_REGISTRY: createSkillRegistryStub(),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -153,7 +158,8 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub()
+      SKILL_REGISTRY: createSkillRegistryStub(),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -192,7 +198,8 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub(mockApis)
+      SKILL_REGISTRY: createSkillRegistryStub(mockApis),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -218,7 +225,8 @@ describe('Integration - chat endpoint', () => {
         }
       },
       SESSION_STATE: namespace,
-      SKILL_REGISTRY: createSkillRegistryStub()
+      SKILL_REGISTRY: createSkillRegistryStub(),
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {
@@ -261,7 +269,8 @@ describe('Integration - chat endpoint', () => {
             return new Response('Not found', { status: 404 });
           }
         })
-      }
+      },
+      API_KEY_SECRET: TEST_SECRET
     } as any;
 
     const request = new Request('https://example.com/api/chat', {

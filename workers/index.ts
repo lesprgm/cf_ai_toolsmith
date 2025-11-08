@@ -5,6 +5,124 @@ import { SkillRegistry as SkillRegistryImpl } from './durable_objects/SkillRegis
 import { parseOpenAPIToSkills, skillsToAIToolSchemas, executeSkill } from './skill-parser';
 import { parseYaml } from './utils/yaml';
 
+const TEMPLATE_LIBRARY = [
+    {
+        id: 'weather-alerts',
+        name: 'Weather Alerts Connector',
+        category: 'Monitoring',
+        description: 'Monitor the National Weather Service API for severe weather alerts and broadcast them to your workspace.',
+        endpoint: {
+            method: 'GET',
+            path: '/alerts/active',
+            description: 'Retrieve all currently active weather alerts for a given area.',
+            sampleRequest: {
+                baseUrl: 'https://api.weather.gov',
+                method: 'GET',
+                path: '/alerts/active',
+                query: { status: 'actual', message_type: 'alert' }
+            }
+        },
+        exports: ['getActiveAlerts'],
+        metadata: {
+            provider: 'National Weather Service',
+            baseUrl: 'https://api.weather.gov',
+            lastUpdated: '2024-01-05T00:00:00Z'
+        },
+        code: `export async function getActiveAlerts(region = 'MD') {
+  const response = await fetch('https://api.weather.gov/alerts/active?area=' + region, {
+    headers: { 'User-Agent': 'CF-Toolsmith Demo' }
+  });
+  if (!response.ok) {
+    throw new Error('Unable to fetch alerts');
+  }
+  return response.json();
+}`
+    },
+    {
+        id: 'github-releases',
+        name: 'GitHub Release Monitor',
+        category: 'Developer Tools',
+        description: 'Track the latest GitHub releases for any repository and notify collaborators when new versions are available.',
+        endpoint: {
+            method: 'GET',
+            path: '/repos/{owner}/{repo}/releases/latest',
+            description: 'Fetch the most recent release for a repository.',
+            sampleRequest: {
+                baseUrl: 'https://api.github.com',
+                method: 'GET',
+                path: '/repos/cloudflare/workers-sdk/releases/latest',
+                headers: { Accept: 'application/vnd.github+json' }
+            }
+        },
+        exports: ['getLatestRelease'],
+        metadata: {
+            provider: 'GitHub',
+            baseUrl: 'https://api.github.com',
+            lastUpdated: '2024-01-11T00:00:00Z'
+        },
+        code: `export async function getLatestRelease(owner: string, repo: string) {
+  const response = await fetch(\`https://api.github.com/repos/\${owner}/\${repo}/releases/latest\`, {
+    headers: { 'Accept': 'application/vnd.github+json' }
+  });
+  if (!response.ok) {
+    throw new Error(\`GitHub API error: \${response.status}\`);
+  }
+  return response.json();
+}`
+    },
+    {
+        id: 'support-digests',
+        name: 'Support Inbox Digest',
+        category: 'Customer Support',
+        description: 'Summarise the latest Zendesk tickets and post concise updates to Slack on a schedule.',
+        endpoint: {
+            method: 'GET',
+            path: '/api/v2/tickets.json',
+            description: 'List tickets with pagination and filtering.',
+            sampleRequest: {
+                baseUrl: 'https://your-team.zendesk.com',
+                method: 'GET',
+                path: '/api/v2/tickets.json',
+                query: { status: 'new,pending' }
+            }
+        },
+        exports: ['listTickets'],
+        metadata: {
+            provider: 'Zendesk',
+            baseUrl: 'https://example.zendesk.com',
+            lastUpdated: '2024-01-02T00:00:00Z'
+        },
+        code: `export async function listTickets(subdomain: string, status = 'new,pending') {
+  const response = await fetch(\`https://\${subdomain}.zendesk.com/api/v2/tickets.json?status=\${status}\`, {
+    headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
+  });
+  if (!response.ok) {
+    throw new Error('Zendesk API error');
+  }
+  return response.json();
+}`
+    }
+];
+
+const POPULAR_SIMPLE_APIS = [
+    { id: 'stripe', name: 'Stripe', category: 'Payments', description: 'Process payments and manage subscriptions.', hasSpec: true, specSource: 'registry' },
+    { id: 'github', name: 'GitHub', category: 'Developer Tools', description: 'Interact with GitHub repositories and workflows.', hasSpec: true, specSource: 'registry' },
+    { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'Send SMS, WhatsApp, and voice calls.', hasSpec: true, specSource: 'registry' },
+    { id: 'slack', name: 'Slack', category: 'Collaboration', description: 'Build bots and workflows for Slack workspaces.', hasSpec: true, specSource: 'registry' },
+    { id: 'openai', name: 'OpenAI', category: 'AI', description: 'Access GPT models and vision APIs.', hasSpec: true, specSource: 'ai-registry' }
+];
+
+class HttpError extends Error {
+    status: number;
+    details?: Record<string, any>;
+
+    constructor(status: number, message: string, details?: Record<string, any>) {
+        super(message);
+        this.status = status;
+        this.details = details;
+    }
+}
+
 export class SessionState extends SessionStateImpl { }
 export class SkillRegistry extends SkillRegistryImpl { }
 
@@ -12,6 +130,8 @@ const MAX_HISTORY_CHARS = 50_000;
 const MAX_MODEL_TOKENS = 24_000;
 const CHARS_PER_TOKEN = 4;
 const STREAM_FLUSH_INTERVAL_MS = 250;
+const STREAM_CHUNK_SIZE = 220;
+const LOG_STREAM_PING_INTERVAL = 5000;
 
 interface ScenarioRunResult {
     name: string;
@@ -36,20 +156,173 @@ export default {
         }
 
         try {
+            if (url.pathname === '/api/templates' && request.method === 'GET') {
+                return jsonResponse({ templates: TEMPLATE_LIBRARY }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/templates/install' && request.method === 'POST') {
+                const { templateId } = await readJsonBody(request);
+                if (!templateId || typeof templateId !== 'string') {
+                    throw new HttpError(400, 'templateId is required');
+                }
+
+                const template = TEMPLATE_LIBRARY.find((entry) => entry.id === templateId);
+                if (!template) {
+                    throw new HttpError(404, 'Template not found');
+                }
+
+                getGlobalLogger().info(`Template installed`, { templateId, templateName: template.name });
+
+                return jsonResponse(
+                    {
+                        success: true,
+                        template,
+                        installedAt: new Date().toISOString()
+                    },
+                    200,
+                    corsHeaders
+                );
+            }
+
+            if (url.pathname === '/api/simple-create/popular' && request.method === 'GET') {
+                return jsonResponse({ success: true, apis: POPULAR_SIMPLE_APIS }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/simple-create' && request.method === 'POST') {
+                const body = await readJsonBody(request);
+                const apiName = typeof body.apiName === 'string' ? body.apiName.trim() : '';
+                const intent = typeof body.intent === 'string' ? body.intent.trim() : '';
+
+                if (!apiName || !intent) {
+                    throw new HttpError(400, 'apiName and intent are required');
+                }
+
+                const spec = buildSimpleSpec(apiName, intent);
+                const analysis = analyzeApiIntent(apiName, intent, spec);
+
+                return jsonResponse({ success: true, spec, analysis }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/workflow/analyze' && request.method === 'POST') {
+                const body = await readJsonBody(request);
+                const description = typeof body.description === 'string' ? body.description.trim() : '';
+                if (!description) {
+                    throw new HttpError(400, 'description is required');
+                }
+
+                const analysis = analyzeWorkflowDescription(description);
+                return jsonResponse({ success: true, analysis }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/workflow/generate' && request.method === 'POST') {
+                const body = await readJsonBody(request);
+                const description = typeof body.description === 'string' ? body.description.trim() : '';
+                const analysis = body.analysis;
+
+                if (!description) {
+                    throw new HttpError(400, 'description is required');
+                }
+                if (!analysis || typeof analysis !== 'object' || !Array.isArray(analysis.steps)) {
+                    throw new HttpError(400, 'analysis with steps is required');
+                }
+
+                const code = buildWorkflowCode(description, analysis.steps);
+                const steps = analysis.steps.map((step: any) => step.title || step);
+
+                return jsonResponse({ success: true, code, steps }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/tools' && request.method === 'GET') {
+                const { userId } = resolveRequestContext(request);
+                const skillRegistryId = env.SKILL_REGISTRY.idFromName('global');
+                const skillRegistryStub = env.SKILL_REGISTRY.get(skillRegistryId);
+
+                const registryResponse = await skillRegistryStub.fetch('http://internal/list', {
+                    method: 'GET',
+                    headers: { 'X-User-ID': userId }
+                });
+                const apiResult = await registryResponse.json<any>();
+
+                const tools = Array.isArray(apiResult.apis)
+                    ? apiResult.apis.map((api) => ({
+                        name: api.apiName,
+                        exports: api.skillNames || [],
+                        metadata: {
+                            description: api.metadata?.description || `${api.skillCount} operations available`,
+                            endpoint: api.baseUrl
+                        },
+                        installedAt: api.registeredAt || new Date().toISOString()
+                    }))
+                    : [];
+
+                return jsonResponse({ tools }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/stream' && request.method === 'GET') {
+                const sessionId = url.searchParams.get('sessionId') || resolveRequestContext(request).sessionId;
+                const stream = createLogStream(sessionId);
+                return new Response(stream, {
+                    headers: {
+                        'Content-Type': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive',
+                        ...corsHeaders,
+                    },
+                });
+            }
+
+            if (url.pathname === '/api/scenarios' && request.method === 'GET') {
+                const scenarioData = await proxyScenarioRequest(env, request, 'http://internal/scenarios/list', { method: 'GET' });
+                const scenarios = Array.isArray(scenarioData) ? scenarioData : scenarioData.scenarios || [];
+                return jsonResponse({ scenarios }, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/scenarios' && request.method === 'POST') {
+                const payload = await request.text();
+                const scenarioData = await proxyScenarioRequest(env, request, 'http://internal/scenarios', {
+                    method: 'POST',
+                    body: payload
+                });
+                return jsonResponse(scenarioData, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/scenarios/run' && request.method === 'POST') {
+                const payload = await request.text();
+                const runData = await proxyScenarioRequest(env, request, 'http://internal/scenarios/run', {
+                    method: 'POST',
+                    body: payload
+                });
+                return jsonResponse(runData, 200, corsHeaders);
+            }
+
+            if (url.pathname.startsWith('/api/scenarios/') && request.method === 'DELETE') {
+                const scenarioId = url.pathname.split('/').pop();
+                if (!scenarioId) {
+                    throw new HttpError(400, 'Scenario ID is required');
+                }
+                const result = await proxyScenarioRequest(env, request, `http://internal/scenarios/${scenarioId}`, {
+                    method: 'DELETE'
+                });
+                return jsonResponse(result, 200, corsHeaders);
+            }
+
+            if (url.pathname === '/api/test-connector' && request.method === 'POST') {
+                const body = await readJsonBody(request);
+                const result = await executeTestConnector(body);
+                return jsonResponse(result, result.success ? 200 : 502, corsHeaders);
+            }
             if (url.pathname === '/api/skills/register' && request.method === 'POST') {
-                const body = await request.json<any>();
+                const body = await readJsonBody(request);
                 let { apiName, spec, apiKey } = body;
 
                 if (!apiName || !spec) {
                     return jsonResponse({ error: 'apiName and spec are required' }, 400, corsHeaders);
                 }
 
-                // If spec is a string, try to parse it (could be JSON or YAML)
                 if (typeof spec === 'string') {
                     try {
                         spec = JSON.parse(spec);
                     } catch {
-                        // Try YAML
                         spec = parseYaml(spec);
                         if (!spec) {
                             return jsonResponse({ error: 'Invalid JSON or YAML in spec' }, 400, corsHeaders);
@@ -57,7 +330,6 @@ export default {
                     }
                 }
 
-                // Validate OpenAPI spec
                 if (!spec.openapi && !spec.swagger) {
                     return jsonResponse({ error: 'Not a valid OpenAPI/Swagger specification' }, 400, corsHeaders);
                 }
@@ -76,9 +348,9 @@ export default {
                         return jsonResponse({ error: 'No valid operations found in OpenAPI spec' }, 400, corsHeaders);
                     }
 
-                    const encryptedApiKey = apiKey ? btoa(apiKey) : '';
+                    const encryptedApiKey = apiKey ? await encryptSecret(apiKey, env) : '';
 
-                    const userId = request.headers.get('X-User-ID') || 'default';
+                    const { userId } = resolveRequestContext(request);
                     const skillRegistryId = env.SKILL_REGISTRY.idFromName('global');
                     const skillRegistryStub = env.SKILL_REGISTRY.get(skillRegistryId);
 
@@ -108,7 +380,7 @@ export default {
             }
 
             if (url.pathname === '/api/skills/list' && request.method === 'GET') {
-                const userId = request.headers.get('X-User-ID') || 'default';
+                const { userId } = resolveRequestContext(request);
                 const skillRegistryId = env.SKILL_REGISTRY.idFromName('global');
                 const skillRegistryStub = env.SKILL_REGISTRY.get(skillRegistryId);
 
@@ -129,7 +401,7 @@ export default {
                     return jsonResponse({ error: 'apiName is required' }, 400, corsHeaders);
                 }
 
-                const userId = request.headers.get('X-User-ID') || 'default';
+                const { userId } = resolveRequestContext(request);
                 const skillRegistryId = env.SKILL_REGISTRY.idFromName('global');
                 const skillRegistryStub = env.SKILL_REGISTRY.get(skillRegistryId);
 
@@ -155,6 +427,7 @@ export default {
                 }
 
                 const message = prompt.trim();
+                const { userId } = resolveRequestContext(request);
                 const sessionStub = getSessionStub(env, request);
 
                 await sessionStub.fetch('http://internal/add-message', {
@@ -165,18 +438,15 @@ export default {
                 const historyResp = await sessionStub.fetch('http://internal/get-history');
                 let history = (await historyResp.json<any>()) as any[];
 
-                // EMERGENCY PRE-CHECK: If history is absurdly large, clear it immediately
                 const preCheckTokens = estimateMessageTokens(history);
                 if (preCheckTokens > 50_000) {
                     console.log(`[EMERGENCY] History has ${preCheckTokens} tokens, clearing all except system messages!`);
                     history = history.filter(msg => msg.role === 'system');
-                    // Save the cleared history
                     await sessionStub.fetch('http://internal/clear-history', { method: 'POST' });
                 }
 
                 const trimmedHistory = trimChatHistory(history);
 
-                const userId = request.headers.get('X-User-ID') || 'default';
                 const skillRegistryId = env.SKILL_REGISTRY.idFromName('global');
                 const skillRegistryStub = env.SKILL_REGISTRY.get(skillRegistryId);
 
@@ -198,7 +468,7 @@ export default {
                         allSkills.push({
                             ...skill,
                             apiName: apiData.apiName,
-                            apiKey: apiData.encryptedApiKey,
+                            encryptedApiKey: apiData.encryptedApiKey,
                             baseUrl: apiData.baseUrl
                         });
                     }
@@ -391,7 +661,9 @@ export default {
                                         }
 
                                         try {
-                                            const decryptedKey = skill.apiKey ? atob(skill.apiKey) : '';
+                                            const decryptedKey = skill.encryptedApiKey
+                                                ? await decryptSecret(skill.encryptedApiKey, env)
+                                                : '';
                                             const result = await executeSkill(skill, args, decryptedKey);
 
                                             skillExecutions.push({
@@ -455,14 +727,7 @@ export default {
                                     }
                                 }
 
-                                for (let i = 0; i < fullResponse.length; i++) {
-                                    const chunk = fullResponse[i];
-                                    const chunkData = {
-                                        type: 'content',
-                                        data: chunk
-                                    };
-                                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkData)}\n\n`));
-                                }
+                                streamTextResponse(controller, encoder, fullResponse);
 
                                 controller.enqueue(encoder.encode('data: [DONE]\n\n'));
                                 controller.close();
@@ -481,14 +746,7 @@ export default {
                                 console.error('[Chat streaming error]', errorMessage);
                                 const errorResponse = `I apologize, but I encountered an error while processing your request. The AI service is currently unavailable or encountered an issue: ${errorMessage}`;
 
-                                for (let i = 0; i < errorResponse.length; i++) {
-                                    const chunk = errorResponse[i];
-                                    const chunkData = {
-                                        type: 'content',
-                                        data: chunk
-                                    };
-                                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunkData)}\n\n`));
-                                }
+                                streamTextResponse(controller, encoder, errorResponse);
 
                                 controller.enqueue(encoder.encode('data: [DONE]\n\n'));
                                 controller.close();
@@ -552,6 +810,13 @@ export default {
 
             return jsonResponse({ error: 'Not found' }, 404, corsHeaders);
         } catch (error) {
+            if (error instanceof HttpError) {
+                const payload: Record<string, any> = { error: error.message };
+                if (error.details) {
+                    payload.details = error.details;
+                }
+                return jsonResponse(payload, error.status, corsHeaders);
+            }
             return jsonResponse({ error: (error as Error).message }, 500, corsHeaders);
         }
     },
@@ -568,9 +833,39 @@ function jsonResponse(data: any, status: number, corsHeaders: Record<string, str
 }
 
 function getSessionStub(env: Env, request: Request): DurableObjectStub {
-    const sessionName = request.headers.get('X-Session-ID') || 'chat-session';
-    const sessionId = env.SESSION_STATE.idFromName(sessionName);
-    return env.SESSION_STATE.get(sessionId);
+    const { sessionId } = resolveRequestContext(request);
+    const durableId = env.SESSION_STATE.idFromName(sessionId);
+    return env.SESSION_STATE.get(durableId);
+}
+
+function resolveRequestContext(request: Request): { userId: string; sessionId: string } {
+    const sessionHeader = request.headers.get('X-Session-ID')?.trim();
+    const userHeader = request.headers.get('X-User-ID')?.trim();
+
+    if (sessionHeader && userHeader && sessionHeader !== userHeader) {
+        throw new HttpError(400, 'X-User-ID must match X-Session-ID');
+    }
+
+    const identifier = sessionHeader || userHeader || deriveAnonymousSessionId(request);
+    return { userId: identifier, sessionId: identifier };
+}
+
+function deriveAnonymousSessionId(request: Request): string {
+    const fingerprint = [
+        request.headers.get('CF-Connecting-IP') || '0.0.0.0',
+        request.headers.get('User-Agent') || 'unknown',
+        request.headers.get('Accept-Language') || ''
+    ].join('|');
+    return `session-${simpleHash(fingerprint)}`;
+}
+
+function simpleHash(input: string): string {
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+        hash = (hash << 5) - hash + input.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
 }
 
 function shouldRunSmokeSuite(message: string): boolean {
@@ -726,10 +1021,7 @@ function trimChatHistory(history: Array<{ role: string; content: string }>): Arr
         return [];
     }
 
-    // Estimate current token usage
     const estimatedTokens = estimateMessageTokens(history);
-    // CORRECTED: llama-3.3-70b-instruct-fp8-fast has 24k context window
-    // Be VERY aggressive - leave plenty of room for tools, system prompt, and response
     const TOKEN_WARNING_THRESHOLD = 8_000;  // Start trimming early (was 16k)
     const TOKEN_EMERGENCY_THRESHOLD = 12_000; // Emergency trim (was 20k)
     const MAX_MESSAGES_NORMAL = 8;          // Much lower (was 15)
@@ -737,20 +1029,16 @@ function trimChatHistory(history: Array<{ role: string; content: string }>): Arr
     const KEEP_MESSAGES_HIGH_TOKENS = 3;    // Keep very few (was 5)
     const KEEP_MESSAGES_EMERGENCY = 2;      // Absolute minimum (was 3)
 
-    // Separate system messages from conversation
     const systemMessages = history.filter(msg => msg.role === 'system');
     const conversationMessages = history.filter(msg => msg.role !== 'system');
 
     let trimmedConversation = conversationMessages;
 
-    // Emergency trim if way over limit
     if (estimatedTokens > TOKEN_EMERGENCY_THRESHOLD) {
         console.log(`[History] EMERGENCY TRIM: ${estimatedTokens} tokens > ${TOKEN_EMERGENCY_THRESHOLD}, keeping only last ${KEEP_MESSAGES_EMERGENCY} messages`);
         trimmedConversation = conversationMessages.slice(-KEEP_MESSAGES_EMERGENCY);
     }
-    // Apply sliding window based on message count
     else if (conversationMessages.length > MAX_MESSAGES_NORMAL) {
-        // Keep last N messages
         const keepCount = estimatedTokens > TOKEN_WARNING_THRESHOLD
             ? KEEP_MESSAGES_HIGH_TOKENS
             : KEEP_MESSAGES_NORMAL;
@@ -759,16 +1047,13 @@ function trimChatHistory(history: Array<{ role: string; content: string }>): Arr
 
         console.log(`[History] Trimming conversation: ${conversationMessages.length} messages -> ${trimmedConversation.length} messages (tokens: ${estimatedTokens})`);
     }
-    // Even if message count is ok, check token usage
     else if (estimatedTokens > TOKEN_WARNING_THRESHOLD) {
-        // Aggressively trim when approaching token limit
         const keepCount = KEEP_MESSAGES_HIGH_TOKENS;
         trimmedConversation = conversationMessages.slice(-keepCount);
 
         console.log(`[History] Token threshold exceeded: trimming ${conversationMessages.length} messages -> ${trimmedConversation.length} messages (tokens: ${estimatedTokens})`);
     }
 
-    // Always preserve system messages at the beginning
     return [...systemMessages, ...trimmedConversation];
 }
 
@@ -777,4 +1062,291 @@ function estimateMessageTokens(messages: Array<{ role: string; content: string }
     // Use more conservative estimate: 3 chars per token instead of 4
     // This accounts for the fact that JSON, technical terms, etc. use more tokens
     return Math.ceil(totalChars / 3);
+}
+
+async function readJsonBody(request: Request): Promise<any> {
+    const raw = await request.text();
+    if (!raw) {
+        return {};
+    }
+    try {
+        return JSON.parse(raw);
+    } catch {
+        throw new HttpError(400, 'Invalid JSON body');
+    }
+}
+
+function buildSimpleSpec(apiName: string, intent: string) {
+    const slug = slugify(apiName);
+    const summary = intent.length > 120 ? `${intent.slice(0, 117)}...` : intent;
+    const path = `/${slug}/action`;
+
+    return {
+        openapi: '3.0.0',
+        info: {
+            title: `${apiName} Connector`,
+            version: '1.0.0',
+            description: `Auto-generated connector for "${intent}".`
+        },
+        servers: [{ url: `https://api.${slug}.example.com` }],
+        paths: {
+            [path]: {
+                post: {
+                    summary,
+                    description: `Performs the requested action against ${apiName}.`,
+                    operationId: `execute${slug.charAt(0).toUpperCase()}${slug.slice(1)}`,
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    additionalProperties: true
+                                }
+                            }
+                        }
+                    },
+                    responses: {
+                        '200': { description: 'Successful response' },
+                        '400': { description: 'Bad request' }
+                    }
+                }
+            }
+        }
+    };
+}
+
+function analyzeApiIntent(apiName: string, intent: string, spec: any) {
+    const lowerIntent = intent.toLowerCase();
+    const category = lowerIntent.includes('payment')
+        ? 'Payments'
+        : lowerIntent.includes('weather')
+            ? 'Weather'
+            : lowerIntent.includes('support')
+                ? 'Support'
+                : 'General';
+
+    const warnings: string[] = [];
+    if (lowerIntent.includes('browser')) {
+        warnings.push('Browser APIs may require client-side code.');
+    }
+    if (spec?.paths && Object.keys(spec.paths).length <= 1) {
+        warnings.push('Only a single endpoint was inferred. Upload a real spec for full coverage.');
+    }
+
+    return {
+        provider: apiName,
+        category,
+        endpointCount: Object.keys(spec.paths || {}).length,
+        specSource: 'ai-generated',
+        requiresClientSide: lowerIntent.includes('browser'),
+        multiStepRequired: lowerIntent.includes('workflow') || lowerIntent.includes('step'),
+        warnings
+    };
+}
+
+function analyzeWorkflowDescription(description: string) {
+    const sentences = description.split(/[\.\n]+/).map((s) => s.trim()).filter(Boolean);
+    const steps = sentences.map((sentence, index) => ({
+        id: `step-${index + 1}`,
+        title: sentence.length > 48 ? `${sentence.slice(0, 45)}…` : sentence,
+        description: sentence
+    }));
+
+    return {
+        workflowName: sentences[0]?.slice(0, 60) || 'Generated Workflow',
+        steps,
+        complexity: steps.length > 4 ? 'medium' : 'low',
+        estimatedDurationMinutes: Math.max(1, steps.length)
+    };
+}
+
+function buildWorkflowCode(description: string, steps: any[]) {
+    const stepComments = steps
+        .map((step: any, index: number) => `  // Step ${index + 1}: ${step.title || step}`)
+        .join('\n');
+
+    return `export async function runWorkflow(input) {
+  console.log('Starting workflow: ${description.replace(/\n/g, ' ')}');
+${stepComments || '  // Define workflow steps here'}
+  return { success: true, completedSteps: ${steps.length} };
+}`;
+}
+
+function createLogStream(sessionId: string): ReadableStream {
+    const logger = getGlobalLogger();
+    const encoder = new TextEncoder();
+
+    return new ReadableStream({
+        start(controller) {
+            const sendEvent = (event: string, data: any) => {
+                controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+            };
+
+            sendEvent('ready', { sessionId });
+
+            let lastCount = 0;
+            const flushLogs = () => {
+                const logs = logger.dump();
+                if (logs.length > lastCount) {
+                    logs.slice(lastCount).forEach((log) => sendEvent('log', log));
+                    lastCount = logs.length;
+                }
+                sendEvent('ping', { timestamp: new Date().toISOString() });
+            };
+
+            flushLogs();
+            const interval = setInterval(flushLogs, LOG_STREAM_PING_INTERVAL);
+
+            (controller as any)._interval = interval;
+        },
+        cancel() {
+            const interval = (this as any)._interval;
+            if (interval) {
+                clearInterval(interval);
+            }
+        }
+    });
+}
+
+async function proxyScenarioRequest(env: Env, request: Request, target: string, init: RequestInit) {
+    const sessionStub = getSessionStub(env, request);
+    const response = await sessionStub.fetch(target, {
+        headers: { 'Content-Type': 'application/json' },
+        ...init
+    });
+
+    const text = await response.text();
+    let parsed: any = text;
+    try {
+        parsed = text ? JSON.parse(text) : {};
+    } catch {
+        // leave as text
+    }
+
+    if (!response.ok) {
+        throw new HttpError(response.status, 'Scenario request failed', { body: parsed });
+    }
+
+    return parsed;
+}
+
+async function executeTestConnector(body: any) {
+    const url = typeof body?.url === 'string' ? body.url.trim() : '';
+    if (!url || !/^https?:\/\//i.test(url)) {
+        throw new HttpError(400, 'A valid https:// URL is required');
+    }
+
+    const method = typeof body?.method === 'string' ? body.method.toUpperCase() : 'GET';
+    const headers = (body?.headers && typeof body.headers === 'object') ? body.headers : {};
+    let payload: BodyInit | undefined;
+
+    if (body?.body !== undefined && body?.body !== null && method !== 'GET' && method !== 'HEAD') {
+        payload = typeof body.body === 'string' ? body.body : JSON.stringify(body.body);
+        if (typeof headers['Content-Type'] !== 'string') {
+            headers['Content-Type'] = 'application/json';
+        }
+    }
+
+    const start = Date.now();
+    const upstream = await fetch(url, { method, headers, body: payload });
+    const durationMs = Date.now() - start;
+    const responseHeaders = Object.fromEntries(upstream.headers.entries());
+    const bodyText = await upstream.text();
+
+    return {
+        success: upstream.ok,
+        status: upstream.status,
+        statusText: upstream.statusText,
+        durationMs,
+        headers: responseHeaders,
+        bodyPreview: truncateForModel(bodyText, 2000)
+    };
+}
+
+function streamTextResponse(controller: ReadableStreamDefaultController, encoder: TextEncoder, content: string) {
+    for (let offset = 0; offset < content.length; offset += STREAM_CHUNK_SIZE) {
+        const chunk = content.slice(offset, offset + STREAM_CHUNK_SIZE);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'content', data: chunk })}\n\n`));
+    }
+}
+
+const encryptionKeyCache = new WeakMap<Env, Promise<CryptoKey>>();
+
+async function encryptSecret(plaintext: string, env: Env): Promise<string> {
+    if (!plaintext) {
+        return '';
+    }
+    const key = await importEncryptionKey(env);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(plaintext);
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded));
+    const payload = concatBytes(iv, ciphertext);
+    return encodeBase64(payload);
+}
+
+async function decryptSecret(ciphertext: string, env: Env): Promise<string> {
+    if (!ciphertext) {
+        return '';
+    }
+    const key = await importEncryptionKey(env);
+    const payload = decodeBase64(ciphertext);
+    const iv = payload.slice(0, 12);
+    const data = payload.slice(12);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+    return new TextDecoder().decode(plaintext);
+}
+
+async function importEncryptionKey(env: Env): Promise<CryptoKey> {
+    if (!env.API_KEY_SECRET || env.API_KEY_SECRET.length < 16) {
+        throw new HttpError(500, 'API_KEY_SECRET must be configured and at least 16 characters long');
+    }
+
+    if (!encryptionKeyCache.has(env)) {
+        const encoder = new TextEncoder();
+        const secretBytes = encoder.encode(env.API_KEY_SECRET.padEnd(32, '#')).slice(0, 32);
+        const keyPromise = crypto.subtle.importKey('raw', secretBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+        encryptionKeyCache.set(env, keyPromise);
+    }
+
+    return encryptionKeyCache.get(env)!;
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+    const combined = new Uint8Array(a.length + b.length);
+    combined.set(a, 0);
+    combined.set(b, a.length);
+    return combined;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+    if (typeof btoa === 'function') {
+        let binary = '';
+        const len = bytes.length;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+    return Buffer.from(bytes).toString('base64');
+}
+
+function decodeBase64(value: string): Uint8Array {
+    if (typeof atob === 'function') {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+    return new Uint8Array(Buffer.from(value, 'base64'));
+}
+
+function slugify(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        || 'api';
 }

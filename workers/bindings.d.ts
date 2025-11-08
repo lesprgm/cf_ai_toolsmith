@@ -3,7 +3,7 @@ export interface Env {
   TOOL_REGISTRY: DurableObjectNamespace;
   SESSION_STATE: DurableObjectNamespace;
   SKILL_REGISTRY: DurableObjectNamespace;
-  // DB?: D1Database; // optional
+  API_KEY_SECRET: string;
 }
 
 export interface CommonSpecModel {

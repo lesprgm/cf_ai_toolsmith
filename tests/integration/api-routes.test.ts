@@ -1,229 +1,148 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import worker from '../../workers/index';
+import { SkillRegistry } from '../../workers/durable_objects/SkillRegistry';
 
-const mockEnv = {
-  AI: {
-    run: async () => ({ response: 'Mock AI response' })
-  } as any,
-  TOOL_REGISTRY: {
-    idFromName: () => ({ toString: () => 'test-id' }),
-    get: () => ({
-      fetch: async () => new Response(JSON.stringify({ success: true }))
-    })
-  } as any,
-  SESSION_STATE: {
-    idFromName: () => ({ toString: () => 'test-session-id' }),
-    get: () => ({
-      fetch: async () => new Response(JSON.stringify({ messages: [] }))
-    })
-  } as any
+class MockStorage {
+  private store = new Map<string, any>();
+
+  async put(key: string, value: any) {
+    this.store.set(key, value);
+  }
+
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.store.get(key);
+  }
+
+  async delete(key: string) {
+    this.store.delete(key);
+  }
+
+  async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
+    const entries = Array.from(this.store.entries()) as Array<[string, T]>;
+    if (!options?.prefix) {
+      return new Map(entries);
+    }
+    return new Map(entries.filter(([key]) => key.startsWith(options.prefix!)));
+  }
+}
+
+const createSkillRegistryNamespace = () => {
+  const storage = new MockStorage();
+  const state = { storage } as any;
+  const instance = new SkillRegistry(state);
+
+  return {
+    namespace: {
+      idFromName: () => ({ toString: () => 'skill-registry-id' }),
+      get: () => ({
+        fetch: async (url: string | URL, init?: RequestInit) => {
+          const request = typeof url === 'string' ? new Request(url, init) : new Request(url, init);
+          return instance.fetch(request);
+        }
+      })
+    },
+    storage
+  };
 };
 
-describe('API Routes - POST /api/parse', () => {
-  it('should parse valid OpenAPI JSON spec', async () => {
-    const spec = {
-      openapi: '3.0.0',
-      info: {
-        title: 'Test API',
-        version: '1.0.0'
+const createEnv = () => {
+  const { namespace } = createSkillRegistryNamespace();
+  return {
+    SKILL_REGISTRY: namespace,
+    AI: {
+      run: async () => ({ response: 'OK' })
+    },
+    API_KEY_SECRET: 'test-secret-key-1234567890'
+  } as any;
+};
+
+describe('API Routes - /api/skills/register', () => {
+  it('registers skills when spec is provided as a YAML string', async () => {
+    const env = createEnv();
+
+    const yamlSpec = `
+openapi: 3.0.0
+info:
+  title: Weather YAML API
+  version: 1.0.0
+servers:
+  - url: https://api.weather.example
+paths:
+  /weather:
+    get:
+      operationId: getWeather
+      summary: Get the current weather
+      responses:
+        '200':
+          description: OK
+`;
+
+    const request = new Request('https://example.com/api/skills/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-ID': 'yaml-user'
       },
-      paths: {
-        '/users': {
-          get: {
-            summary: 'List users',
-            responses: {
-              '200': { description: 'Success' }
-            }
-          }
+      body: JSON.stringify({
+        apiName: 'Weather YAML',
+        spec: yamlSpec,
+        apiKey: 'secret-key'
+      })
+    });
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+
+    const result = await response.json() as any;
+    expect(result.success).toBe(true);
+    expect(result.skillCount).toBe(1);
+    expect(result.skillNames).toContain('getWeather');
+  });
+
+  it('rejects OpenAPI specs larger than 5MB', async () => {
+    const env = createEnv();
+    const oversizedPayload = 'x'.repeat(5 * 1024 * 1024 + 10);
+
+    const request = new Request('https://example.com/api/skills/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-ID': 'big-user'
+      },
+      body: JSON.stringify({
+        apiName: 'Huge Spec',
+        spec: {
+          openapi: '3.0.0',
+          info: { title: 'Huge', version: '1.0.0' },
+          paths: {},
+          components: {},
+          padding: oversizedPayload
         }
-      }
-    };
-
-    const formData = new FormData();
-    const blob = new Blob([JSON.stringify(spec)], { type: 'application/json' });
-    formData.append('file', blob, 'openapi.json');
-
-    const request = new Request('http://localhost:8787/api/parse', {
-      method: 'POST',
-      headers: {
-        'X-Session-ID': 'test-session'
-      },
-      body: formData
+      })
     });
 
-    // Note: This would require importing the worker's fetch handler
-    // const response = await worker.fetch(request, mockEnv);
-    
-    // For now, test the expected structure
-    expect(request.method).toBe('POST');
-    expect(request.headers.get('X-Session-ID')).toBe('test-session');
-  });
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(400);
 
-  it('should reject requests without file', async () => {
-    const request = new Request('http://localhost:8787/api/parse', {
-      method: 'POST',
-      headers: {
-        'X-Session-ID': 'test-session',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({})
-    });
-
-    expect(request.method).toBe('POST');
+    const result = await response.json() as any;
+    expect(result.error).toContain('Spec is too large');
   });
 });
 
-describe('API Routes - POST /api/generate', () => {
-  it('should accept valid CSM and endpoint ID', async () => {
-    const requestBody = {
-      csm: {
-        name: 'Test API',
-        version: '1.0.0',
-        endpoints: [
-          {
-            id: 'get-users',
-            method: 'GET',
-            path: '/users',
-            description: 'List all users'
-          }
-        ]
-      },
-      endpointId: 'get-users'
-    };
-
-    const request = new Request('http://localhost:8787/api/generate', {
-      method: 'POST',
+describe('API Routes - CORS handling', () => {
+  it('responds to OPTIONS preflight requests with permissive headers', async () => {
+    const request = new Request('https://example.com/api/skills/register', {
+      method: 'OPTIONS',
       headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': 'test-session'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    expect(request.method).toBe('POST');
-    expect(request.headers.get('Content-Type')).toBe('application/json');
-  });
-
-  it('should validate required fields', async () => {
-    const invalidBody = {
-      csm: {
-        name: 'Test API'
-        // Missing endpoints
-      }
-      // Missing endpointId
-    };
-
-    const request = new Request('http://localhost:8787/api/generate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': 'test-session'
-      },
-      body: JSON.stringify(invalidBody)
-    });
-
-    expect(request.method).toBe('POST');
-  });
-});
-
-describe('API Routes - POST /api/verify', () => {
-  it('should accept TypeScript code for verification', async () => {
-    const requestBody = {
-      code: `
-        export async function getUsers() {
-          const response = await fetch('https://api.example.com/users');
-          return response.json();
-        }
-      `
-    };
-
-    const request = new Request('http://localhost:8787/api/verify', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': 'test-session'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    expect(request.method).toBe('POST');
-    expect(request.headers.get('X-Session-ID')).toBe('test-session');
-  });
-});
-
-describe('API Routes - PUT /api/install', () => {
-  it('should accept tool ID and code', async () => {
-    const requestBody = {
-      toolId: 'get-users',
-      code: 'export async function getUsers() { return []; }'
-    };
-
-    const request = new Request('http://localhost:8787/api/install', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': 'test-session'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    expect(request.method).toBe('PUT');
-    expect(request.headers.get('Content-Type')).toBe('application/json');
-  });
-});
-
-describe('API Routes - POST /api/chat', () => {
-  it('should accept chat message', async () => {
-    const requestBody = {
-      message: 'What tools are installed?'
-    };
-
-    const request = new Request('http://localhost:8787/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': 'test-session'
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    expect(request.method).toBe('POST');
-    expect(request.headers.get('X-Session-ID')).toBe('test-session');
-  });
-});
-
-describe('API Routes - GET /api/stream', () => {
-  it('should accept session ID query parameter', () => {
-    const request = new Request('http://localhost:8787/api/stream?sessionId=test-123', {
-      method: 'GET'
-    });
-
-    const url = new URL(request.url);
-    expect(url.searchParams.get('sessionId')).toBe('test-123');
-    expect(request.method).toBe('GET');
-  });
-
-  it('should support SSE headers', () => {
-    const request = new Request('http://localhost:8787/api/stream?sessionId=test-123', {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/event-stream'
+        'Origin': 'http://localhost:3000',
+        'Access-Control-Request-Method': 'POST'
       }
     });
 
-    expect(request.headers.get('Accept')).toBe('text/event-stream');
-  });
-});
-
-describe('API Routes - GET /api/tools', () => {
-  it('should list installed tools', () => {
-    const request = new Request('http://localhost:8787/api/tools', {
-      method: 'GET',
-      headers: {
-        'X-Session-ID': 'test-session'
-      }
-    });
-
-    expect(request.method).toBe('GET');
-    expect(request.headers.get('X-Session-ID')).toBe('test-session');
+    const response = await worker.fetch(request, {} as any);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type');
   });
 });

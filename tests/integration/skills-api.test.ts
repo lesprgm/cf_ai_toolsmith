@@ -54,7 +54,8 @@ describe('Integration - Skills API Endpoints', () => {
             SKILL_REGISTRY: namespace,
             AI: {
                 run: async () => ({ response: 'OK' })
-            }
+            },
+            API_KEY_SECRET: 'test-secret-key-1234567890'
         };
     });
 
@@ -187,15 +188,16 @@ describe('Integration - Skills API Endpoints', () => {
                 body: JSON.stringify({
                     apiName: 'Bad API',
                     spec: {
-                        // Invalid spec - missing required fields
                         notValid: true
                     }
                 })
             });
 
             const response = await worker.fetch(request, env);
-            // Should handle gracefully
-            expect(response.status).toBeGreaterThanOrEqual(200);
+            expect(response.status).toBe(400);
+
+            const result = await response.json() as any;
+            expect(result.error).toContain('OpenAPI/Swagger');
         });
 
         it('should encrypt API key before storage', async () => {
@@ -227,7 +229,6 @@ describe('Integration - Skills API Endpoints', () => {
             const response = await worker.fetch(request, env);
             expect(response.status).toBe(200);
 
-            // Verify API key is encrypted (not returned in plain text)
             const listRequest = new Request('https://example.com/api/skills/list', {
                 headers: { 'X-User-ID': 'user123' }
             });
@@ -235,7 +236,6 @@ describe('Integration - Skills API Endpoints', () => {
             const listResult = await listResponse.json() as any;
 
             expect(listResult.apis).toHaveLength(1);
-            // API key should NOT be in the list response
             expect(listResult.apis[0].apiKey).toBeUndefined();
         });
 
@@ -268,7 +268,6 @@ describe('Integration - Skills API Endpoints', () => {
                 }
             };
 
-            // Register V1
             await worker.fetch(new Request('https://example.com/api/skills/register', {
                 method: 'POST',
                 headers: {
@@ -281,7 +280,6 @@ describe('Integration - Skills API Endpoints', () => {
                 })
             }), env);
 
-            // Register V2 with same name
             const response2 = await worker.fetch(new Request('https://example.com/api/skills/register', {
                 method: 'POST',
                 headers: {
@@ -296,7 +294,6 @@ describe('Integration - Skills API Endpoints', () => {
 
             expect(response2.status).toBe(200);
 
-            // Should only have one API
             const listRequest = new Request('https://example.com/api/skills/list', {
                 headers: { 'X-User-ID': 'user123' }
             });
@@ -323,7 +320,6 @@ describe('Integration - Skills API Endpoints', () => {
         });
 
         it('should list all registered APIs for user', async () => {
-            // Register two APIs
             const apis = [
                 {
                     apiName: 'API One',
@@ -383,7 +379,6 @@ describe('Integration - Skills API Endpoints', () => {
         });
 
         it('should only return APIs for specified user', async () => {
-            // Register API for user1
             await worker.fetch(new Request('https://example.com/api/skills/register', {
                 method: 'POST',
                 headers: {
@@ -409,7 +404,6 @@ describe('Integration - Skills API Endpoints', () => {
                 })
             }), env);
 
-            // Register API for user2
             await worker.fetch(new Request('https://example.com/api/skills/register', {
                 method: 'POST',
                 headers: {
@@ -435,7 +429,6 @@ describe('Integration - Skills API Endpoints', () => {
                 })
             }), env);
 
-            // List APIs for user1
             const request1 = new Request('https://example.com/api/skills/list', {
                 headers: { 'X-User-ID': 'user1' }
             });
@@ -445,7 +438,6 @@ describe('Integration - Skills API Endpoints', () => {
             expect(result1.apis).toHaveLength(1);
             expect(result1.apis[0].apiName).toBe('User1 API');
 
-            // List APIs for user2
             const request2 = new Request('https://example.com/api/skills/list', {
                 headers: { 'X-User-ID': 'user2' }
             });
@@ -502,7 +494,6 @@ describe('Integration - Skills API Endpoints', () => {
 
     describe('POST /api/skills/delete', () => {
         it('should delete existing API', async () => {
-            // Register API first
             await worker.fetch(new Request('https://example.com/api/skills/register', {
                 method: 'POST',
                 headers: {
@@ -528,7 +519,6 @@ describe('Integration - Skills API Endpoints', () => {
                 })
             }), env);
 
-            // Delete it
             const deleteRequest = new Request('https://example.com/api/skills/delete', {
                 method: 'POST',
                 headers: {
@@ -546,7 +536,6 @@ describe('Integration - Skills API Endpoints', () => {
             const deleteResult = await deleteResponse.json() as any;
             expect(deleteResult.success).toBe(true);
 
-            // Verify it's gone
             const listRequest = new Request('https://example.com/api/skills/list', {
                 headers: { 'X-User-ID': 'user123' }
             });
@@ -660,7 +649,6 @@ describe('Integration - Skills API Endpoints', () => {
             });
 
             const response = await worker.fetch(request, env);
-            // Should use default user ID
             expect(response.status).toBe(200);
         });
 
@@ -674,7 +662,6 @@ describe('Integration - Skills API Endpoints', () => {
             });
 
             const response = await worker.fetch(request, envWithoutRegistry as any);
-            // Should return error
             expect(response.status).toBeGreaterThanOrEqual(400);
         });
     });
